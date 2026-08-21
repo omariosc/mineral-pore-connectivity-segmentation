@@ -93,6 +93,7 @@ scripts/report_validation_screen_tiles.py
 scripts/run_public_smoke.py
 scripts/record_protocol_cell_failure.py
 scripts/train_patches.py
+tests/__init__.py
 tests/test_aire_confirmatory_slurm.py
 tests/test_augmentations.py
 tests/test_conditional_pore_loss.py
