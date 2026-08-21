@@ -293,5 +293,6 @@ The public repository does not grant rights to the research images, derived
 masks, trained weights, manuscript, or locally generated publication assets.
 See [DATA_AVAILABILITY.md](DATA_AVAILABILITY.md) for the current data status.
 `CITATION.cff` remains provisional until the software author list and release
-identifier are confirmed. The included MIT licence applies to code only after
-all contributors confirm that release choice.
+identifier are confirmed. The reviewed code-only release is provided under the
+MIT licence; that licence does not extend to the excluded research data,
+manuscript, trained weights, or publication artwork.
