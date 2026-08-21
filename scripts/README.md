@@ -63,10 +63,21 @@ python3 scripts/train_patches.py \
 Scientific AIRE training uses the smoke, screen, and selected-retraining
 wrappers. Held-out evaluation uses the separate locked L40S wrapper only;
 primary and plain-U-Net roles are submitted as separate serial arrays.
+The pre-repair smoke `7433018`, screen `7433604`, and
+`classical-fit-51ca0b9bcf413de5` lock are audit-only and must not be reused.
 
 ```bash
 export PORE_NEURAL_FREEZE_ID=<neural-freeze-id>
 export PORE_SELECTED_ARCHITECTURE_ROLE=primary_multiscale
+sbatch scripts/aire_locked_evaluation.slurm
+```
+
+After the primary array reaches a terminal state, submit the comparator from a
+self-contained environment block:
+
+```bash
+export PORE_NEURAL_FREEZE_ID=<neural-freeze-id>
+export PORE_SELECTED_ARCHITECTURE_ROLE=plain_unet_comparator
 sbatch scripts/aire_locked_evaluation.slurm
 ```
 
@@ -128,10 +139,14 @@ diagnostics can be regenerated on an allocated L40S without selecting a new
 winner or resolving any locked retrospective file path:
 
 ```bash
-python3 scripts/report_validation_screen_tiles.py \
-  --selected-method-lock config/selected_method_lock.json \
-  --device cuda
+sbatch scripts/aire_validation_report.slurm
 ```
+
+The reporter atomically creates the authenticated validation-screen publication
+package: JSON, metric/margin/candidate-seed/tile CSV files, a TeX fragment,
+CAS-width PDF, 600-dpi PNG, and a SHA-256 manifest. It is validation-only and
+cannot reselect the winner. This standalone screen package does not depend on,
+and is not consumed by, the locked held-out-results manifest or assembler.
 
 After all six authenticated neural evaluations and the classical evaluation
 exist, build the strict input manifest from their two content-addressed IDs:
@@ -178,6 +193,7 @@ inventing missing curves, qualitative panels, physical scale, or timing.
 | `aire_validation_screen.slurm` | Immutable 15-cell validation-only method screen |
 | `aire_selected_retrain.slurm` | Lock-bound three-seed selected-winner retraining array |
 | `aire_locked_evaluation.slurm` | Serial L40S array for the sole held-out neural evaluation path |
+| `aire_validation_report.slurm` | Non-array L40S wrapper for frozen validation-screen diagnostics |
 | `evaluate_confirmatory_checkpoint.py` | Fail-closed full-tile evaluation of the validation-selected checkpoint |
 | `build_neural_freeze_manifest.py` | Authenticates and freezes the selected-method lock plus six validation-only neural retraining cells before classical held-out evaluation |
 | `fit_classical_comparators.py` | Fits and freezes B0/B1/B2 comparators from training labels only, outside the neural screen |

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
 import copy
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -882,6 +885,10 @@ def test_signed_r3_margins_are_descriptive_candidate_minus_reference():
         "same_seed",
         "three_seed_arithmetic_mean",
     }
+    assert all(
+        row["evidence_label"] == "validation-only model development"
+        for row in rows
+    )
 
 
 def test_metric_csv_has_every_tile_and_pooled_class_row():
@@ -893,6 +900,71 @@ def test_metric_csv_has_every_tile_and_pooled_class_row():
     }
     assert {row["class_id"] for row in rows} == {0, 1, 2}
     assert all(row["evidence_kind"] == reporter.EVIDENCE_KIND for row in rows)
+    assert all(
+        row["evidence_label"] == "validation-only model development"
+        for row in rows
+    )
+
+
+def test_publication_rows_include_every_candidate_seed_and_fixed_tile():
+    cells = _cell_reports()
+    summaries, _ = reporter.attach_signed_r3_margins(cells)
+    summary_rows = reporter.publication_summary_rows(cells, summaries)
+    tile_rows = reporter.publication_tile_rows(cells)
+
+    expected_pairs = [
+        (candidate, seed)
+        for candidate in reporter.SCREEN_CANDIDATE_ORDER
+        for seed in reporter.SCREEN_SEEDS
+    ]
+    assert [(row["candidate"], row["seed"]) for row in summary_rows] == (
+        expected_pairs
+    )
+    assert len(summary_rows) == 15
+    assert len(tile_rows) == 75
+    assert all(
+        row["evidence_label"] == "validation-only model development"
+        for row in (*summary_rows, *tile_rows)
+    )
+    for candidate, seed in expected_pairs:
+        rows = [
+            row
+            for row in tile_rows
+            if (row["candidate"], row["seed"]) == (candidate, seed)
+        ]
+        assert [row["validation_ordinal"] for row in rows] == [1, 2, 3, 4, 5]
+        assert all(row["outcome_dependent_tile_choice_performed"] is False for row in rows)
+
+    for candidate in reporter.SCREEN_CANDIDATE_ORDER:
+        candidate_rows = [
+            row for row in summary_rows if row["candidate"] == candidate
+        ]
+        c0_values = np.asarray(
+            [row["c0_iou"] for row in candidate_rows], dtype=np.float64
+        )
+        assert all(
+            row["candidate_mean_c0_iou"] == pytest.approx(c0_values.mean())
+            for row in candidate_rows
+        )
+        assert all(
+            row["candidate_sample_sd_c0_iou"]
+            == pytest.approx(c0_values.std(ddof=1))
+            for row in candidate_rows
+        )
+    r3_rows = [row for row in summary_rows if row["candidate"] == "R3"]
+    for row in r3_rows:
+        for key, _label, _vector_key, _color in reporter.PUBLICATION_METRICS:
+            assert row[
+                f"same_seed_{key}_margin_candidate_minus_r3"
+            ] == pytest.approx(0.0)
+            assert row[
+                f"candidate_mean_{key}_margin_candidate_minus_r3"
+            ] == pytest.approx(0.0)
+
+    missing_tile = copy.deepcopy(cells)
+    missing_tile[0]["per_tile"].pop()
+    with pytest.raises(ValueError, match="exactly five"):
+        reporter.publication_tile_rows(missing_tile)
 
 
 def test_report_bundle_is_byte_deterministic_and_refuses_overwrite(tmp_path: Path):
@@ -904,25 +976,28 @@ def test_report_bundle_is_byte_deterministic_and_refuses_overwrite(tmp_path: Pat
             "locked_retrospective_input_bytes_read": 0,
         },
     }
-    metric_rows = [{"candidate": "R3", "seed": 42, "iou": 0.75}]
-    margin_rows = [
-        {
-            "scope": "same_seed",
-            "candidate": "R3",
-            "seed": 42,
-            "metric": "c0.iou",
-            "candidate_value": 0.75,
-            "r3_value": 0.75,
-            "signed_margin_candidate_minus_r3": 0.0,
-        }
-    ]
+    cells = _cell_reports()
+    summaries, margin_rows = reporter.attach_signed_r3_margins(cells)
+    metric_rows = reporter.metric_csv_rows(cells)
+    summary_rows = reporter.publication_summary_rows(cells, summaries)
+    tile_rows = reporter.publication_tile_rows(cells)
     first = tmp_path / "first"
     second = tmp_path / "second"
     first_checksums = reporter.write_report_bundle(
-        first, report, metric_rows, margin_rows
+        first,
+        report,
+        metric_rows,
+        margin_rows,
+        summary_rows,
+        tile_rows,
     )
     second_checksums = reporter.write_report_bundle(
-        second, report, metric_rows, margin_rows
+        second,
+        report,
+        metric_rows,
+        margin_rows,
+        summary_rows,
+        tile_rows,
     )
     assert first_checksums == second_checksums
     for name in (*reporter.OUTPUT_FILE_NAMES, "checksums.sha256"):
@@ -934,8 +1009,170 @@ def test_report_bundle_is_byte_deterministic_and_refuses_overwrite(tmp_path: Pat
         f"{first_checksums[name]}  {name}"
         for name in sorted(reporter.OUTPUT_FILE_NAMES)
     ]
+    with (first / reporter.PUBLICATION_SUMMARY_CSV_NAME).open(
+        "r", encoding="utf-8", newline=""
+    ) as handle:
+        rendered_summary_rows = list(csv.DictReader(handle))
+    assert len(rendered_summary_rows) == 15
+    assert [
+        (row["candidate"], int(row["seed"])) for row in rendered_summary_rows
+    ] == [
+        (candidate, seed)
+        for candidate in reporter.SCREEN_CANDIDATE_ORDER
+        for seed in reporter.SCREEN_SEEDS
+    ]
+    with (first / reporter.PUBLICATION_TILE_CSV_NAME).open(
+        "r", encoding="utf-8", newline=""
+    ) as handle:
+        rendered_tile_rows = list(csv.DictReader(handle))
+    assert len(rendered_tile_rows) == 75
+    assert {int(row["validation_ordinal"]) for row in rendered_tile_rows} == {
+        1,
+        2,
+        3,
+        4,
+        5,
+    }
+    assert all(
+        row["evidence_label"] == "validation-only model development"
+        for row in (*rendered_summary_rows, *rendered_tile_rows)
+    )
+
+    tex_text = (first / reporter.PUBLICATION_TEX_NAME).read_text(encoding="utf-8")
+    lowered_tex = tex_text.lower()
+    assert "\\begin{figure}[pos=htbp]" in tex_text
+    assert "\\begin{table}[pos=htbp]" in tex_text
+    assert "\\begin{figure*}" not in tex_text
+    assert "\\begin{table*}" not in tex_text
+    assert "[t]" not in tex_text
+    assert "validation-only model development" in lowered_tex
+    assert "seeds 42, 123, and 2025" in lowered_tex
+    assert "all five validation tiles" in lowered_tex
+    assert "no re-selection" in lowered_tex
+    assert "no outcome-dependent tile choice" in lowered_tex
+    assert "held-out" not in lowered_tex
+    assert "unseen" not in lowered_tex
+    assert "significan" not in lowered_tex
+    for candidate in reporter.SCREEN_CANDIDATE_ORDER:
+        assert candidate in tex_text
+
+    from PIL import Image
+
+    with Image.open(first / reporter.PUBLICATION_PNG_NAME) as image:
+        assert image.size == (
+            round(
+                reporter.CAS_SC_TEXT_WIDTH_INCHES
+                * reporter.PUBLICATION_PNG_DPI
+            ),
+            round(
+                reporter.CAS_SUMMARY_HEIGHT_INCHES
+                * reporter.PUBLICATION_PNG_DPI
+            ),
+        )
+        assert image.info["dpi"][0] == pytest.approx(
+            reporter.PUBLICATION_PNG_DPI, abs=0.1
+        )
+        pixels = np.asarray(image.convert("RGB"))
+    for color in reporter.PUBLICATION_CLASS_COLORS.values():
+        expected_rgb = np.asarray(
+            tuple(int(color[index : index + 2], 16) for index in (1, 3, 5)),
+            dtype=np.uint8,
+        )
+        assert np.any(np.all(pixels == expected_rgb, axis=2))
+
+    pdf_bytes = (first / reporter.PUBLICATION_PDF_NAME).read_bytes()
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert b"/MediaBox [ 0 0 466.56 518.4 ]" in pdf_bytes
+    assert b"/FontFile2" in pdf_bytes
+    assert b"/Type3" not in pdf_bytes
+    if shutil.which("pdftotext"):
+        extracted = tmp_path / "summary.txt"
+        subprocess.run(
+            [
+                shutil.which("pdftotext"),
+                str(first / reporter.PUBLICATION_PDF_NAME),
+                str(extracted),
+            ],
+            check=True,
+        )
+        visible_text = extracted.read_text(encoding="utf-8").lower()
+        assert "validation-only model development" in visible_text
+        assert "seed 42" in visible_text
+        assert "seed 123" in visible_text
+        assert "seed 2025" in visible_text
+        assert all(f"tile {ordinal}" in visible_text for ordinal in range(1, 6))
+        assert "held-out" not in visible_text
+        assert "unseen" not in visible_text
+        assert "significan" not in visible_text
+
+    pdflatex = shutil.which("pdflatex")
+    cas_class = reporter.PROJECT_ROOT / "Overleaf" / "cas-sc.cls"
+    if pdflatex and cas_class.is_file():
+        integration_tex = first / "cas_fragment_integration.tex"
+        integration_tex.write_text(
+            "\n".join(
+                [
+                    "\\documentclass[a4paper,fleqn]{cas-sc}",
+                    "\\usepackage[authoryear]{natbib}",
+                    "\\usepackage{graphicx}",
+                    "\\usepackage{booktabs}",
+                    "\\begin{document}",
+                    "\\typeout{CAS_TEXTWIDTH=\\the\\textwidth}",
+                    f"\\input{{{reporter.PUBLICATION_TEX_NAME}}}",
+                    "\\clearpage",
+                    "\\end{document}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        prior_texinputs = environment.get("TEXINPUTS", "")
+        environment["TEXINPUTS"] = (
+            f"{cas_class.parent}//:{prior_texinputs}"
+        )
+        completed = subprocess.run(
+            [
+                pdflatex,
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                "-file-line-error",
+                integration_tex.name,
+            ],
+            cwd=first,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        log_text = (first / "cas_fragment_integration.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "Overleaf/cas-sc.cls" in log_text
+        assert "CAS_TEXTWIDTH=468.3324pt" in log_text
+        lowered_log = log_text.lower()
+        for forbidden in (
+            "unknown key",
+            "is unknown",
+            "unknown option",
+            "keyval error",
+            "overfull \\hbox",
+            "overfull \\vbox",
+            "float too large",
+        ):
+            assert forbidden not in lowered_log
+
     with pytest.raises(FileExistsError, match="overwrite"):
-        reporter.write_report_bundle(first, report, metric_rows, margin_rows)
+        reporter.write_report_bundle(
+            first,
+            report,
+            metric_rows,
+            margin_rows,
+            summary_rows,
+            tile_rows,
+        )
 
 
 class _FakeTensor:
@@ -1119,6 +1356,45 @@ def test_report_scope_is_explicitly_validation_only_and_nonselecting(monkeypatch
         "partition_metadata_statement"
     ]
     assert document["selected_method_lock"]["selection_performed_by_reporter"] is False
+    contract = document["publication_summary_contract"]
+    assert contract["label"] == "validation-only model development"
+    assert contract["candidate_order"] == list(reporter.SCREEN_CANDIDATE_ORDER)
+    assert contract["seed_order"] == [42, 123, 2025]
+    assert contract["validation_tile_ordinals"] == [1, 2, 3, 4, 5]
+    assert contract["candidate_seed_row_count"] == 15
+    assert contract["tile_diagnostic_row_count"] == 75
+    assert contract["aggregate_summary"] == (
+        "arithmetic_mean_and_sample_standard_deviation"
+    )
+    assert contract["significance_claims"] is False
+    assert contract["selection_fixed_by_existing_lock"] is True
+    assert contract["winner_reselection_performed"] is False
+    assert contract["outcome_dependent_tile_choice_performed"] is False
+    assert contract["figure_geometry_inches"] == {
+        "width": 6.48,
+        "height": 7.2,
+        "cas_layout": "active_cas_sc_text_width",
+    }
+    assert contract["active_cas_sc_text_width_tex_points"] == 468.3324
+    assert contract["minimum_visible_label_points"] == 6.0
+    assert contract["png_dpi"] == 600
+    assert contract["font_family_preference"] == ["Arial", "Helvetica"]
+    assert contract["pdf_font_type"] == 42
+    assert contract["class_palette"] == {
+        "C0": "#B33A3A",
+        "C1": "#2E8B57",
+        "C2": "#4C78A8",
+    }
+    assert set(contract["non_color_seed_encoding"]) == {"42", "123", "2025"}
+    assert len(
+        {
+            (
+                value["marker"],
+                value["line_style"],
+            )
+            for value in contract["non_color_seed_encoding"].values()
+        }
+    ) == 3
     assert "were not opened, read, hashed, or parsed" in document["data"][
         "annotation_identity_verification"
     ]

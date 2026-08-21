@@ -34,23 +34,32 @@ CANONICAL_GROUP_MEMBERSHIP_MAP = {
     "test": ["pdo2_24"],
 }
 
-# Shared by the trainer, screen/lock builders, and failure recorder.  Keeping
-# the list in this lightweight module avoids importing CUDA-heavy training
-# code merely to attest a failed scheduler cell.
+# Shared by the trainer, evaluator, validation reporter, freeze/lock builders,
+# and failure recorder. Keeping the list in this lightweight module avoids
+# importing CUDA-heavy training code merely to attest a failed scheduler cell.
 EXECUTION_SOURCE_FILES = (
+    "src/__init__.py",
+    "src/models/__init__.py",
+    "config/__init__.py",
+    "config/config_loader.py",
     "scripts/train_patches.py",
     "scripts/evaluate_confirmatory_checkpoint.py",
+    "scripts/report_validation_screen_tiles.py",
     "src/training/patch_trainer.py",
     "src/training/checkpoint_io.py",
     "src/training/patch_dataset.py",
     "src/training/data_contract.py",
     "src/training/augmentations.py",
+    "src/training/model_factory.py",
+    "src/training/visualization.py",
     "src/training/screen_selection.py",
     "src/training/neural_freeze.py",
+    "src/models/boundary_aware_loss.py",
     "src/models/focal_loss.py",
     "src/models/combined_loss.py",
     "src/models/hierarchical_pore_loss.py",
     "src/models/conditional_pore_loss.py",
+    "src/models/topological_loss.py",
     "src/models/unet_model.py",
     "src/models/multiscale_attention_unet.py",
     "src/models/pyramid_context.py",
@@ -61,6 +70,7 @@ EXECUTION_SOURCE_FILES = (
     "scripts/aire_validation_smoke.slurm",
     "scripts/aire_selected_retrain.slurm",
     "scripts/aire_locked_evaluation.slurm",
+    "scripts/aire_validation_report.slurm",
     "scripts/build_smoke_preflight_manifest.py",
     "scripts/build_selected_method_lock.py",
     "scripts/build_neural_freeze_manifest.py",

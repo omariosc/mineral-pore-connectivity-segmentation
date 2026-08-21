@@ -123,6 +123,11 @@ primary architecture and, separately, the controlled plain U-Net comparator.
 Exact commands and artifact checks are documented in
 `docs/CONFIRMATORY_RERUN.md`; do not add an array override at submission time.
 
+Campaign `7433604`, smoke `7433018`, and the former
+`classical-fit-51ca0b9bcf413de5` lock are audit-only because they predate the
+complete repository-local execution-source map. They must not be reused for a
+selected lock, retraining, evaluation, or publication result.
+
 ```bash
 export PORE_ACKNOWLEDGE_RECOVERED_THRESHOLD_RULE=1
 sbatch scripts/aire_validation_smoke.slurm
@@ -176,6 +181,7 @@ export PORE_SELECTED_ARCHITECTURE_ROLE=primary_multiscale
 sbatch scripts/aire_locked_evaluation.slurm
 
 # Only after the primary evaluation array reaches a terminal state:
+export PORE_NEURAL_FREEZE_ID=<neural-freeze-id>
 export PORE_SELECTED_ARCHITECTURE_ROLE=plain_unet_comparator
 sbatch scripts/aire_locked_evaluation.slurm
 ```
@@ -282,6 +288,7 @@ python3 -m pytest -o addopts='' -q \
   tests/test_hierarchical_pore_loss.py \
   tests/test_pyramid_context.py \
   tests/test_screen_selection.py \
+  tests/test_execution_source_closure.py \
   tests/test_neural_freeze.py \
   tests/test_confirmatory_evaluator.py \
   tests/test_classical_comparators.py \

@@ -4,6 +4,23 @@ This is the executable publication protocol. Historical jobs and the first
 20 August protocol draft are audit records only. The scientific rules are
 frozen in `CONFIRMATORY_PROTOCOL_ADDENDUM_BALANCED_PORES_2026-08-20.md`.
 
+## Invalidated pre-repair campaigns
+
+The validation screen `7433604` and its smoke campaign `7433018` are retained
+for scheduler/audit history only. They were launched with a 27-file source map
+that omitted repository-local Python modules executed by the trainer, including
+the configuration loader. Do not use any cell from either campaign to build a
+selected-method lock, retrain a winner, evaluate the locked partition, or
+support a manuscript result. The repaired source map deliberately makes those
+artifacts fail exact source-map verification; cells must not be mixed into a
+new campaign.
+
+The earlier `classical-fit-51ca0b9bcf413de5` lock is also audit-only after this
+repair because it hashes the former `src/training/screen_selection.py`. Refit
+the unchanged prespecified classical protocol through its canonical wrapper
+after staging the repaired source tree. Numerically identical model bytes do
+not make the old lock valid under a changed source snapshot.
+
 ## Non-negotiable boundaries
 
 - Use the canonical lossless `0/1/255` target PNGs; COCO polygons are metadata
@@ -38,6 +55,7 @@ python3 -m pytest -o addopts='' -q \
   tests/test_pyramid_context.py \
   tests/test_model_resolution.py \
   tests/test_screen_selection.py \
+  tests/test_execution_source_closure.py \
   tests/test_checkpoint_security.py \
   tests/test_aire_confirmatory_slurm.py \
   tests/test_confirmatory_evaluator.py \
@@ -113,6 +131,22 @@ balanced C0/C1 rule, authenticates every outcome/checkpoint, applies the frozen
 failure policy, and records the deterministic winner. Never choose a method or
 seed by inspecting held-out performance.
 
+Generate the optional per-tile validation-screen report only through its
+source-controlled non-array L40S wrapper:
+
+```bash
+sbatch scripts/aire_validation_report.slurm
+```
+
+It atomically writes an authenticated package below
+`results/validation_screen_model_development/<selected-lock-sha256>/`: the
+full JSON report, metric/margin/candidate-seed/tile CSV files, a publication
+TeX fragment, CAS-width PDF, 600-dpi PNG, and a SHA-256 manifest covering every
+payload. This is validation-only model-development evidence and cannot change
+the frozen winner. The package is the prespecified screen publication output;
+it is deliberately separate from, and does not depend on, the locked held-out
+publication-results manifest and assembler.
+
 ## 4. Selected primary and plain-U-Net retraining
 
 Read the selected candidate key from the verified lock. Submit the primary
@@ -130,7 +164,10 @@ After that array reaches a terminal successful state, submit a separate plain
 U-Net array with the same method key and lock:
 
 ```bash
+export PORE_SELECTED_METHOD_KEY=<R3|H3|C2-P|C2-F|C2-FP>
+export PORE_SELECTED_METHOD_LOCK=config/selected_method_lock.json
 export PORE_SELECTED_ARCHITECTURE_ROLE=plain_unet_comparator
+export PORE_ACKNOWLEDGE_RECOVERED_THRESHOLD_RULE=1
 sbatch scripts/aire_selected_retrain.slurm
 ```
 
@@ -169,6 +206,7 @@ After that array terminates, submit the plain comparator evaluation against
 the same freeze:
 
 ```bash
+export PORE_NEURAL_FREEZE_ID=<NEURAL_FREEZE_ID>
 export PORE_SELECTED_ARCHITECTURE_ROLE=plain_unet_comparator
 sbatch scripts/aire_locked_evaluation.slurm
 ```
@@ -250,6 +288,9 @@ The assembler reauthenticates every bound byte, reconstructs metrics from
 per-tile confusion counts, preserves the prespecified seed-42 qualitative
 panel only when the evaluator declared its exact PDF/PNG pair, and refuses to
 invent missing curves, panels, physical scale, timing, or metric values.
+It intentionally does not ingest the separate validation-screen publication
+package. Use that package directly for the screen result; do not manually
+splice it into this locked held-out-evaluation assembly.
 
 ## Required evidence bundle
 
