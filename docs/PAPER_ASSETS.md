@@ -31,7 +31,7 @@ python3 scripts/generate_publication_assets.py --study-workflow-only
 | --- | --- |
 | `fig_01_class_balance` | Dataset class imbalance, including rare disconnected pores |
 | `fig_09_model_architecture` | Source-derived multiscale attention U-Net schematic |
-| `fig_10_study_workflow` | Locked retrospective group-disjoint evaluation workflow |
+| `fig_10_study_workflow` | Filename-series-disjoint locked retrospective evaluation workflow |
 | `tables/dataset_summary.csv` | Split counts from the frozen 74/5/21 manifest |
 
 Each figure is exported as PDF, PNG, and SVG. These files are candidates for a

@@ -51,6 +51,7 @@ original_images/
 labelled images/
 results/
 results/**/checkpoints/
+publication_results_inputs.json
 *.pth
 *.pt
 *.ckpt
@@ -104,7 +105,9 @@ scripts/**
 !scripts/aire_selected_retrain.slurm
 !scripts/aire_validation_screen.slurm
 !scripts/aire_validation_smoke.slurm
+!scripts/assemble_publication_results.py
 !scripts/audit_public_snapshot.py
+!scripts/build_publication_results_manifest.py
 !scripts/build_selected_method_lock.py
 !scripts/build_neural_freeze_manifest.py
 !scripts/build_smoke_preflight_manifest.py
@@ -112,8 +115,10 @@ scripts/**
 !scripts/evaluate_locked_classical_comparators.py
 !scripts/export_public_snapshot.py
 !scripts/fit_classical_comparators.py
+!scripts/generate_dataset_split_table.py
 !scripts/generate_publication_assets.py
 !scripts/record_protocol_cell_failure.py
+!scripts/report_validation_screen_tiles.py
 !scripts/run_public_smoke.py
 
 # Publication figures and tables remain available in the private checkout but

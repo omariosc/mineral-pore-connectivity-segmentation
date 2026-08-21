@@ -68,6 +68,7 @@ jobs:
           python3 -m pytest -o addopts='' -q
           tests/test_public_smoke.py
           tests/test_public_release.py
+          tests/test_checkpoint_security.py
           tests/test_publication_assets.py
           tests/test_augmentations.py
           tests/test_patch_dataset.py
@@ -80,5 +81,9 @@ jobs:
           tests/test_confirmatory_evaluator.py
           tests/test_classical_comparators.py
           tests/test_classical_evaluator.py
+          tests/test_dataset_split_table.py
           tests/test_model_resolution.py
           tests/test_aire_confirmatory_slurm.py
+          tests/test_validation_screen_reporter.py
+          tests/test_publication_results_assembler.py
+          tests/test_publication_results_manifest_builder.py

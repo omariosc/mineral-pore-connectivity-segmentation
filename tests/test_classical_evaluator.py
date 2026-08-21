@@ -1193,6 +1193,69 @@ def test_classical_publication_style_reuses_the_locked_class_contract() -> None:
     plt.close("all")
 
 
+def test_classical_publication_interval_is_labelled_as_within_series_sensitivity(
+    monkeypatch, tmp_path
+) -> None:
+    from matplotlib.figure import Figure
+
+    captured = []
+
+    def capture_figure(figure, path, *args, **kwargs) -> None:
+        captured.append(figure)
+
+    monkeypatch.setattr(Figure, "savefig", capture_figure)
+    interval = {"lower": 0.4, "upper": 0.6}
+    results = {
+        method: {
+            "aggregate_confusion_matrix": np.eye(3, dtype=np.int64),
+            "aggregate_metrics": {
+                "per_class": [
+                    {"iou": 0.5},
+                    {"iou": 0.5},
+                    {"iou": 0.5},
+                ]
+            },
+            "uncertainty": {
+                "intervals": {
+                    "class_0.iou": dict(interval),
+                    "class_1.iou": dict(interval),
+                }
+            },
+        }
+        for method in CLASSICAL_COMPARATOR_IDS
+    }
+    qualitative = {
+        "image": np.asarray([[0, 255], [64, 128]], dtype=np.uint8),
+        "target": np.asarray([[0, 1], [2, 0]], dtype=np.uint8),
+        **{
+            method: np.asarray([[0, 1], [2, 0]], dtype=np.uint8)
+            for method in CLASSICAL_COMPARATOR_IDS
+        },
+    }
+    evaluator.write_publication_figures(
+        tmp_path,
+        results,
+        qualitative,
+        qualitative_name="synthetic_tile.png",
+    )
+    metric_figure = next(
+        figure
+        for figure in captured
+        if any(
+            axis.get_title(loc="left") == "C0 and C1 IoU by classical comparator"
+            for axis in figure.axes
+        )
+    )
+    visible_text = " ".join(
+        [text.get_text() for text in metric_figure.texts]
+        + [axis.get_title(loc="left") for axis in metric_figure.axes]
+        + [text.get_text() for axis in metric_figure.axes for text in axis.texts]
+    )
+    assert "Locked retrospective evaluation partition" in visible_text
+    assert "95% within-series whole-tile sensitivity intervals" in visible_text
+    assert "whole-tile bootstrap intervals" not in visible_text
+
+
 def test_clean_image_decoder_rejects_colour_and_non_native_tiles() -> None:
     colour = np.zeros((2, 2, 3), dtype=np.uint8)
     colour[:, :, 0] = 255

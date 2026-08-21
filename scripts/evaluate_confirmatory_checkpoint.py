@@ -23,6 +23,7 @@ import json
 import math
 import random
 import sys
+import textwrap
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +45,10 @@ from src.training.screen_selection import (  # noqa: E402
     SELECTED_METHOD_LOCK_SCHEMA_VERSION,
     verify_selected_method_lock_document,
 )
-from src.training.checkpoint_io import load_weights_only_checkpoint  # noqa: E402
+from src.training.checkpoint_io import (  # noqa: E402
+    load_weights_only_checkpoint,
+    tensor_state_dict_semantic_sha256,
+)
 from src.training.neural_freeze import (  # noqa: E402
     ARCHITECTURE_ROLES,
     load_verified_neural_freeze_manifest,
@@ -157,6 +161,17 @@ PUBLICATION_CLASS_COLORS = ("#B33A3A", "#2E8B57", "#4C78A8")
 PUBLICATION_CLASS_LINE_STYLES = ("-", "--", "-.")
 PUBLICATION_CLASS_MARKERS = ("o", "s", "^")
 PUBLICATION_CURVE_ORDER = ("precision_recall", "roc")
+LOCKED_RETROSPECTIVE_PARTITION_LABEL = (
+    "Locked retrospective evaluation partition"
+)
+WITHIN_SERIES_WHOLE_TILE_INTERVAL_LABEL = (
+    "95% within-series whole-tile sensitivity intervals"
+)
+QUALITATIVE_ERROR_CATEGORY_LABELS = {
+    1: "Reference C0 misclassified",
+    2: "Reference C1 misclassified",
+    3: "Reference C2 misclassified",
+}
 PUBLICATION_SANS_SERIF_FONTS = (
     "Arial",
     "Helvetica",
@@ -1474,6 +1489,56 @@ def _normalization_matches(value: Any) -> bool:
 
 def _torch_load_trusted(path: Path, device: str) -> Mapping[str, Any]:
     return load_weights_only_checkpoint(path, map_location=device)
+
+
+def validate_loaded_checkpoint_semantic_identity(
+    checkpoint: Mapping[str, Any],
+    locked_evaluation_identity: Mapping[str, Any],
+) -> str:
+    """Bind the safely loaded tensor state to the already verified freeze cell.
+
+    The checkpoint file digest is checked while resolving the neural freeze.  A
+    second, semantic check immediately after deserialization closes the gap in
+    which the path could otherwise be replaced between that byte-level check
+    and loading.
+    """
+
+    expected = locked_evaluation_identity.get(
+        "checkpoint_state_dict_semantic_sha256"
+    )
+    if (
+        not isinstance(expected, str)
+        or len(expected) != 64
+        or any(character not in "0123456789abcdef" for character in expected)
+    ):
+        raise ValueError(
+            "Locked evaluation identity lacks an authenticated checkpoint "
+            "state-dict semantic SHA-256"
+        )
+    state = checkpoint.get("model_state_dict")
+    if not isinstance(state, Mapping):
+        raise ValueError("Checkpoint has no tensor model_state_dict mapping")
+    observed = tensor_state_dict_semantic_sha256(state)
+    if observed != expected:
+        raise ValueError(
+            "Loaded checkpoint state-dict semantic SHA-256 does not match the "
+            "authenticated neural-freeze cell"
+        )
+    return observed
+
+
+def load_authenticated_checkpoint(
+    path: Path,
+    device: str,
+    locked_evaluation_identity: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], str]:
+    """Load with the restricted loader and immediately bind the tensor state."""
+
+    checkpoint = _torch_load_trusted(path, device)
+    observed = validate_loaded_checkpoint_semantic_identity(
+        checkpoint, locked_evaluation_identity
+    )
+    return checkpoint, observed
 
 
 def validate_selected_checkpoint(checkpoint: Mapping[str, Any]) -> None:
@@ -2971,6 +3036,8 @@ def _configure_matplotlib() -> Any:
             "figure.facecolor": "white",
             "axes.facecolor": "white",
             "savefig.facecolor": "white",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
         }
     )
     return plt
@@ -3014,7 +3081,12 @@ def plot_confusion_matrix(confusion: np.ndarray, output_dir: Path, tile_count: i
     axis.set_yticks(range(3), labels=labels)
     axis.set_xlabel("Predicted class")
     axis.set_ylabel("Reference class")
-    axis.set_title("Held-out test confusion matrix", loc="left", pad=24, fontweight="semibold")
+    axis.set_title(
+        f"{LOCKED_RETROSPECTIVE_PARTITION_LABEL} confusion matrix",
+        loc="left",
+        pad=24,
+        fontweight="semibold",
+    )
     axis.text(
         0,
         1.025,
@@ -3121,7 +3193,7 @@ def plot_curves(
         axis.text(
             0,
             1.025,
-            f"Held-out test set; {tile_count} native tiles; "
+            f"{LOCKED_RETROSPECTIVE_PARTITION_LABEL}; {tile_count} native tiles; "
             f"{curve_bins}-bin score approximation",
             transform=axis.transAxes,
             fontsize=9,
@@ -3145,7 +3217,7 @@ def plot_class_metric_summary(
     output_dir: Path,
     tile_count: int,
 ) -> None:
-    """Plot per-class IoU and Dice with whole-tile bootstrap intervals."""
+    """Plot per-class IoU and Dice with within-series tile sensitivity ranges."""
     plt = _configure_matplotlib()
     from matplotlib.ticker import PercentFormatter
 
@@ -3155,7 +3227,7 @@ def plot_class_metric_summary(
         "iou": {"label": "IoU", "marker": "o", "open_marker": False},
         "dice": {"label": "Dice", "marker": "s", "open_marker": True},
     }
-    fig, axis = plt.subplots(figsize=(7.4, 5.2), constrained_layout=True)
+    fig, axis = plt.subplots(figsize=(7.4, 5.2))
     for class_id in range(3):
         color = PUBLICATION_CLASS_COLORS[class_id]
         for metric in ("iou", "dice"):
@@ -3199,18 +3271,27 @@ def plot_class_metric_summary(
     axis.set_ylim(0, 1)
     axis.set_ylabel("Score")
     axis.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
-    axis.set_title("Per-class IoU and Dice", loc="left", pad=24, fontweight="semibold")
-    axis.text(
-        0,
-        1.025,
-        f"Held-out test set; {tile_count} native tiles; 95% whole-tile bootstrap intervals",
-        transform=axis.transAxes,
+    fig.suptitle(
+        "Per-class IoU and Dice",
+        x=0.11,
+        y=0.985,
+        ha="left",
+        fontsize=13,
+        fontweight="semibold",
+    )
+    fig.text(
+        0.11,
+        0.925,
+        f"{LOCKED_RETROSPECTIVE_PARTITION_LABEL}; {tile_count} native tiles\n"
+        f"{WITHIN_SERIES_WHOLE_TILE_INTERVAL_LABEL}",
+        ha="left",
+        va="top",
         fontsize=9,
         color="#555555",
-        va="bottom",
     )
     axis.grid(axis="y", color="#E2E2E2", linewidth=0.65)
     axis.spines[["top", "right"]].set_visible(False)
+    fig.subplots_adjust(left=0.11, right=0.985, bottom=0.13, top=0.79)
     for extension in ("pdf", "png"):
         fig.savefig(
             output_dir / f"per_class_iou_dice.{extension}",
@@ -3220,53 +3301,254 @@ def plot_class_metric_summary(
     plt.close(fig)
 
 
+def qualitative_evidence_display_uint8(
+    network_probabilities: np.ndarray, candidate: str
+) -> np.ndarray:
+    """Encode raw learned C0/C1 probabilities for display without persistence."""
+    if candidate not in PROSPECTIVE_METHOD_PROTOCOLS:
+        raise ValueError(f"Unknown protocol candidate: {candidate!r}")
+    probabilities = np.asarray(network_probabilities, dtype=np.float32)
+    expected_outputs = 2 if candidate in CONDITIONAL_CANDIDATES else 3
+    if probabilities.ndim != 3 or probabilities.shape[0] != expected_outputs:
+        raise ValueError(
+            "Qualitative evidence requires the candidate's native network outputs"
+        )
+    if np.any(~np.isfinite(probabilities)):
+        raise ValueError("Qualitative evidence contains non-finite probabilities")
+    if probabilities.min() < -1e-7 or probabilities.max() > 1.0 + 1e-7:
+        raise ValueError("Qualitative evidence probabilities are outside [0, 1]")
+    return np.floor(np.clip(probabilities[:2], 0.0, 1.0) * 255.0 + 0.5).astype(
+        np.uint8
+    )
+
+
+def qualitative_error_categories(
+    target: np.ndarray, prediction: np.ndarray
+) -> np.ndarray:
+    """Encode errors by reference class: 0 correct, 1/2/3 for C0/C1/C2."""
+    reference = np.asarray(target)
+    predicted = np.asarray(prediction)
+    if reference.shape != predicted.shape or reference.ndim != 2:
+        raise ValueError("Qualitative error overlay requires aligned 2D masks")
+    if np.any((reference < 0) | (reference > 2)) or np.any(
+        (predicted < 0) | (predicted > 2)
+    ):
+        raise ValueError("Qualitative error overlay labels must be in {0, 1, 2}")
+    categories = np.zeros(reference.shape, dtype=np.uint8)
+    mismatched = reference != predicted
+    categories[mismatched] = reference[mismatched].astype(np.uint8) + 1
+    return categories
+
+
+def qualitative_figure_contract(
+    candidate: str, *, image_id: int, file_name: str
+) -> Dict[str, Any]:
+    """Return the labels and evidence gates used by the qualitative figure."""
+    if candidate not in PROSPECTIVE_METHOD_PROTOCOLS:
+        raise ValueError(f"Unknown protocol candidate: {candidate!r}")
+    conditional = candidate in CONDITIONAL_CANDIDATES
+    if conditional:
+        c0_title = "(c) Raw learned P(C0)\ninside fixed pore gate"
+        c1_title = "(d) Raw learned P(C1)\ninside fixed pore gate"
+        final_title = "(e) Final 3-class prediction\nfixed-gate composition"
+        relationship = (
+            "Raw C0/C1 evidence is operative only inside the fixed pore gate; "
+            "the final map assigns C2 outside that gate."
+        )
+    else:
+        c0_title = "(c) Raw learned P(C0)\nnative 3-class softmax"
+        c1_title = "(d) Raw learned P(C1)\nnative 3-class softmax"
+        final_title = "(e) Final 3-class prediction\nnative 3-class argmax"
+        relationship = (
+            "Raw C0/C1 evidence comes from the same native three-class softmax; "
+            "the final map is its pixelwise argmax, including C2."
+        )
+    return {
+        "panel_titles": [
+            "(a) Input",
+            "(b) Lossless reference",
+            c0_title,
+            c1_title,
+            final_title,
+            "(f) Error overlay\ncolour = reference class",
+        ],
+        "tile_label": f"Tile ID {int(image_id)} | {file_name}",
+        "raw_evidence_relationship": relationship,
+        "raw_evidence_display_encoding": (
+            "round(network probability * 255) for rendering on a fixed 0-1 scale"
+        ),
+        "error_overlay_definition": (
+            "misclassified pixels coloured by their reference class; "
+            "correct pixels have no overlay"
+        ),
+        "error_category_labels": dict(QUALITATIVE_ERROR_CATEGORY_LABELS),
+        "historical_metric_values_included": False,
+        "physical_scale_author_evidence_gate": {
+            "status": "open_author_evidence_required",
+            "scale_bar_shown": False,
+            "pixel_size_shown": False,
+            "required_evidence": "authenticated pixel size or scale-bar metadata",
+            "evaluation_blocking": False,
+        },
+    }
+
+
 def plot_qualitative_triptych(
     image: np.ndarray,
     target: np.ndarray,
     prediction: np.ndarray,
     *,
+    raw_c0_evidence_uint8: np.ndarray,
+    raw_c1_evidence_uint8: np.ndarray,
+    candidate: str,
     image_id: int,
     file_name: str,
     output_dir: Path,
-) -> None:
-    """Render the outcome-independent, preselected held-out example tile."""
+) -> Dict[str, Any]:
+    """Render the outcome-independent, preselected retrospective example tile."""
     plt = _configure_matplotlib()
-    from matplotlib.colors import ListedColormap
+    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
     from matplotlib.patches import Patch
 
+    if image.dtype != np.uint8 or image.ndim != 2:
+        raise ValueError("Qualitative input must be a 2D uint8 image")
+    if target.shape != image.shape or prediction.shape != image.shape:
+        raise ValueError("Qualitative input, reference, and prediction must align")
+    evidence_maps = (
+        np.asarray(raw_c0_evidence_uint8),
+        np.asarray(raw_c1_evidence_uint8),
+    )
+    if any(
+        value.dtype != np.uint8 or value.shape != image.shape
+        for value in evidence_maps
+    ):
+        raise ValueError(
+            "Qualitative C0/C1 evidence maps must be aligned uint8 arrays"
+        )
+
+    contract = qualitative_figure_contract(
+        candidate, image_id=image_id, file_name=file_name
+    )
     segmentation_cmap = ListedColormap(PUBLICATION_CLASS_COLORS)
-    fig, axes = plt.subplots(1, 3, figsize=(12.2, 4.8))
+    evidence_cmaps = [
+        LinearSegmentedColormap.from_list(
+            f"qualitative_c{class_id}_evidence",
+            ("#F7F7F7", PUBLICATION_CLASS_COLORS[class_id]),
+        )
+        for class_id in (0, 1)
+    ]
+    for cmap in evidence_cmaps:
+        cmap.set_bad("#D9D9D9")
+    error_cmap = ListedColormap(PUBLICATION_CLASS_COLORS)
+    error_norm = BoundaryNorm((0.5, 1.5, 2.5, 3.5), error_cmap.N)
+    error_categories = qualitative_error_categories(target, prediction)
+
+    # Keep the natural canvas close to a two-column manuscript width so labels
+    # remain readable when the six-panel figure is placed at \textwidth.
+    fig, axes_array = plt.subplots(2, 3, figsize=(8.2, 6.4))
+    axes = list(axes_array.ravel())
     axes[0].imshow(image, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
-    axes[1].imshow(target, cmap=segmentation_cmap, vmin=-0.5, vmax=2.5, interpolation="nearest")
-    axes[2].imshow(prediction, cmap=segmentation_cmap, vmin=-0.5, vmax=2.5, interpolation="nearest")
-    for axis, title in zip(axes, ("Input", "Lossless reference", "Model prediction")):
-        axis.set_title(title, fontsize=11, pad=6)
+    axes[1].imshow(
+        target,
+        cmap=segmentation_cmap,
+        vmin=-0.5,
+        vmax=2.5,
+        interpolation="nearest",
+    )
+    evidence_mask = (
+        image >= CONDITIONAL_PORE_THRESHOLD_UINT8
+        if candidate in CONDITIONAL_CANDIDATES
+        else np.zeros(image.shape, dtype=bool)
+    )
+    for axis, evidence, cmap in zip(axes[2:4], evidence_maps, evidence_cmaps):
+        axis.imshow(
+            np.ma.masked_array(evidence, mask=evidence_mask),
+            cmap=cmap,
+            vmin=0,
+            vmax=255,
+            interpolation="nearest",
+        )
+    axes[4].imshow(
+        prediction,
+        cmap=segmentation_cmap,
+        vmin=-0.5,
+        vmax=2.5,
+        interpolation="nearest",
+    )
+    axes[5].imshow(image, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+    axes[5].imshow(
+        np.ma.masked_equal(error_categories, 0),
+        cmap=error_cmap,
+        norm=error_norm,
+        interpolation="nearest",
+        alpha=0.82,
+    )
+    for axis, title in zip(axes, contract["panel_titles"]):
+        axis.set_title(title, fontsize=12, pad=6, fontweight="semibold")
         axis.set_xticks([])
         axis.set_yticks([])
         for spine in axis.spines.values():
             spine.set_color("#777777")
             spine.set_linewidth(0.7)
-    fig.subplots_adjust(left=0.025, right=0.99, bottom=0.15, top=0.84, wspace=0.045)
+    fig.subplots_adjust(
+        left=0.02,
+        right=0.99,
+        bottom=0.245,
+        top=0.84,
+        hspace=0.29,
+        wspace=0.055,
+    )
     fig.suptitle(
-        "Qualitative segmentation comparison",
-        x=0.025,
-        y=0.98,
+        "Outcome-independent qualitative segmentation example",
+        x=0.02,
+        y=0.985,
         ha="left",
-        fontsize=13,
+        fontsize=14,
         fontweight="semibold",
     )
-    # Tile identity and the outcome-independent selection rule remain in the
-    # authenticated JSON report rather than being embedded in the artwork.
+    fig.text(
+        0.02,
+        0.943,
+        contract["tile_label"],
+        ha="left",
+        va="top",
+        fontsize=11,
+        color="#444444",
+    )
+    fig.text(
+        0.02,
+        0.125,
+        textwrap.fill(contract["raw_evidence_relationship"], width=106),
+        ha="left",
+        va="bottom",
+        fontsize=10.5,
+        color="#444444",
+    )
+    fig.text(
+        0.02,
+        0.073,
+        "Evidence panels use one fixed 0-1 scale. Error-overlay colour identifies\n"
+        "the misclassified reference class; correct pixels have no overlay.",
+        ha="left",
+        va="bottom",
+        fontsize=10.5,
+        color="#444444",
+    )
     legend = [
-        Patch(facecolor=segmentation_cmap.colors[class_id], edgecolor="#444444", label=CLASS_LABELS[class_id])
+        Patch(
+            facecolor=segmentation_cmap.colors[class_id],
+            edgecolor="#444444",
+            label=CLASS_LABELS[class_id],
+        )
         for class_id in range(3)
     ]
     fig.legend(
         handles=legend,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.015),
+        bbox_to_anchor=(0.5, 0.008),
         ncol=3,
         frameon=False,
+        fontsize=10.5,
     )
     for extension in ("pdf", "png"):
         fig.savefig(
@@ -3276,6 +3558,7 @@ def plot_qualitative_triptych(
             pad_inches=0.08,
         )
     plt.close(fig)
+    return contract
 
 
 def choose_device(requested: str) -> str:
@@ -3467,7 +3750,11 @@ def evaluate(args: argparse.Namespace) -> Path:
 
     checkpoint_sha = str(locked_evaluation_identity["checkpoint_sha256"])
 
-    checkpoint = _torch_load_trusted(checkpoint_path, "cpu")
+    checkpoint, loaded_checkpoint_semantic_sha256 = load_authenticated_checkpoint(
+        checkpoint_path,
+        "cpu",
+        locked_evaluation_identity,
+    )
     validate_selected_checkpoint(checkpoint)
     recorded_normalization = validate_checkpoint_normalization(checkpoint)
     verified_lock, lock_sha256, lock_identifier = load_verified_selected_method_lock(
@@ -3628,6 +3915,11 @@ def evaluate(args: argparse.Namespace) -> Path:
         "input_image_sha256": test_image_sha256[qualitative_file_name],
         "target_mask_sha256": test_mask_sha256[qualitative_file_name],
         "post_processing": "none",
+        "publication_figure_contract": qualitative_figure_contract(
+            selected_method,
+            image_id=qualitative_image_id,
+            file_name=qualitative_file_name,
+        ),
     }
     qualitative_arrays: Optional[Dict[str, np.ndarray]] = None
 
@@ -3716,11 +4008,17 @@ def evaluate(args: argparse.Namespace) -> Path:
         )
         if image_id == qualitative_image_id:
             if not args.no_publication_plots:
+                evidence_display = qualitative_evidence_display_uint8(
+                    network_probabilities, selected_method
+                )
                 qualitative_arrays = {
                     "image": image.copy(),
                     "target": target.copy(),
                     "prediction": prediction.copy(),
+                    "raw_c0_evidence_uint8": evidence_display[0].copy(),
+                    "raw_c1_evidence_uint8": evidence_display[1].copy(),
                 }
+                del evidence_display
         update_probability_histograms(
             positive_histograms, negative_histograms, probabilities, target
         )
@@ -3825,6 +4123,13 @@ def evaluate(args: argparse.Namespace) -> Path:
             qualitative_arrays["image"],
             qualitative_arrays["target"],
             qualitative_arrays["prediction"],
+            raw_c0_evidence_uint8=qualitative_arrays[
+                "raw_c0_evidence_uint8"
+            ],
+            raw_c1_evidence_uint8=qualitative_arrays[
+                "raw_c1_evidence_uint8"
+            ],
+            candidate=selected_method,
             image_id=qualitative_image_id,
             file_name=qualitative_file_name,
             output_dir=publication_dir,
@@ -3845,6 +4150,7 @@ def evaluate(args: argparse.Namespace) -> Path:
         "checkpoint": {
             "path": _repository_relative(checkpoint_path),
             "sha256": checkpoint_sha,
+            "state_dict_semantic_sha256": loaded_checkpoint_semantic_sha256,
             "role": checkpoint.get("checkpoint_role"),
             "selection_metric_name": checkpoint.get("selection_metric_name"),
             "selection_metric_definition": checkpoint.get("selection_metric_definition"),

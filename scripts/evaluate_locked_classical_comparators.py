@@ -38,10 +38,12 @@ from scripts.evaluate_confirmatory_checkpoint import (  # noqa: E402
     LOCKED_BOOTSTRAP_SEED,
     LOCKED_CONFIDENCE,
     LOCKED_INPUT_ATTESTATIONS,
+    LOCKED_RETROSPECTIVE_PARTITION_LABEL,
     LOCKED_SPLIT_MANIFEST_SHA256,
     LOCKED_TARGET_ATTESTATIONS,
     PUBLICATION_CLASS_COLORS,
     PUBLICATION_SANS_SERIF_FONTS,
+    WITHIN_SERIES_WHOLE_TILE_INTERVAL_LABEL,
     aggregate_secondary_2d_diagnostics,
     bootstrap_secondary_2d_diagnostics,
     confusion_from_labels,
@@ -1745,7 +1747,8 @@ def write_publication_figures(
     axis.text(
         0,
         1.02,
-        "C0 and C1 shown separately; 95% whole-tile bootstrap intervals",
+        f"{LOCKED_RETROSPECTIVE_PARTITION_LABEL}; C0 and C1 shown separately\n"
+        f"{WITHIN_SERIES_WHOLE_TILE_INTERVAL_LABEL}",
         transform=axis.transAxes,
         fontsize=9,
         color="#555555",

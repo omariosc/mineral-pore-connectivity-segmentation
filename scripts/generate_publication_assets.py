@@ -14,6 +14,7 @@ import json
 import math
 import os
 import textwrap
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -102,6 +103,7 @@ def configure_style() -> None:
             "savefig.dpi": 300,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
+            "svg.hashsalt": "geoscience-publication-assets",
         }
     )
 
@@ -122,9 +124,26 @@ def save_figure(fig: plt.Figure, name: str) -> None:
     png_path = FIGURES / f"{name}.png"
     svg_path = FIGURES / f"{name}.svg"
     pdf_path = FIGURES / f"{name}.pdf"
-    fig.savefig(png_path, bbox_inches="tight", facecolor=TOKENS["surface"])
+    fixed_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    fig.savefig(
+        png_path,
+        bbox_inches="tight",
+        facecolor=TOKENS["surface"],
+        metadata={"Software": "generate_publication_assets.py", "Title": name},
+    )
     fig.savefig(svg_path, bbox_inches="tight", facecolor=TOKENS["surface"], metadata={"Date": None})
-    fig.savefig(pdf_path, bbox_inches="tight", facecolor=TOKENS["surface"])
+    fig.savefig(
+        pdf_path,
+        bbox_inches="tight",
+        facecolor=TOKENS["surface"],
+        metadata={
+            "Creator": "generate_publication_assets.py",
+            "Producer": "Matplotlib",
+            "CreationDate": fixed_time,
+            "ModDate": fixed_time,
+            "Title": name,
+        },
+    )
     normalize_text_file(svg_path)
     plt.close(fig)
 
@@ -155,15 +174,20 @@ def label_mask_paths() -> list[Path]:
 
 
 def measured_class_counts() -> dict[str, int]:
-    """Measure the three saved label values directly from the mask files."""
+    """Measure the authoritative 0/1/255 labels and reject any other value."""
     counts = {"0": 0, "1": 0, "2": 0}
     for path in label_mask_paths():
         values, frequencies = np.unique(np.asarray(Image.open(path)), return_counts=True)
         histogram = dict(zip(values.tolist(), frequencies.tolist(), strict=False))
+        unexpected = sorted(set(histogram) - {0, 1, 255})
+        if unexpected:
+            raise ValueError(
+                f"{path}: expected the authoritative mask values 0/1/255; "
+                f"found {unexpected}"
+            )
         counts["0"] += int(histogram.get(0, 0))
         counts["1"] += int(histogram.get(1, 0))
-        # Historical masks encode mineral as 255; newer masks may use 2.
-        counts["2"] += int(histogram.get(2, 0)) + int(histogram.get(255, 0))
+        counts["2"] += int(histogram.get(255, 0))
     return counts
 
 
@@ -254,6 +278,12 @@ def write_tables(runs: pd.DataFrame) -> None:
     rounded.to_csv(TABLES / "experiment_summary.csv", index=False, lineterminator="\n")
     write_markdown_table(rounded.head(20), TABLES / "top_experiments.md")
 
+    write_dataset_summary()
+
+
+def write_dataset_summary() -> None:
+    """Write only frozen split counts to the public-candidate dataset table."""
+
     dataset_rows = dataset_summary_rows()
     with (TABLES / "dataset_summary.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["metric", "value"], lineterminator="\n")
@@ -325,56 +355,14 @@ def confirmatory_split_summary_rows(
 
 
 def dataset_summary_rows() -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    source_dir = microscopy_image_dir()
-    image_count = len(list(source_dir.glob("*.png")))
-    rows.append({"metric": "input_images", "value": str(image_count)})
-    rows.append({"metric": "local_image_source", "value": str(source_dir.relative_to(ROOT))})
+    """Return one unambiguous denominator family: frozen image split counts.
 
-    measured = measured_class_counts()
-    total_measured = sum(measured.values())
-    if total_measured:
-        for class_id, count in measured.items():
-            class_name = CLASS_NAMES[class_id]
-            rows.append({"metric": f"{class_name} pixels measured", "value": str(count)})
-            rows.append(
-                {
-                    "metric": f"{class_name} percent measured",
-                    "value": f"{100.0 * count / total_measured:.6f}",
-                }
-            )
+    Historical JSON files mix all-pixel class shares with within-pore shares.
+    They are deliberately excluded from this public-candidate table rather than
+    being relabelled or silently combined.
+    """
 
-    pixel_stats_path = RESULTS / "step2_pixel_classification" / "pixel_classification_stats.json"
-    pore_stats_path = RESULTS / "step2_pore_classification" / "pore_classification_stats.json"
-    stats_path = pixel_stats_path if pixel_stats_path.exists() else pore_stats_path
-    if stats_path.exists():
-        stats = json.loads(stats_path.read_text())
-        for key, value in stats.items():
-            if isinstance(value, (str, int, float)):
-                rows.append({"metric": key, "value": str(value)})
-        totals = stats.get("class_totals") or stats.get("pore_class_totals") or {}
-        percentages = stats.get("class_percentages") or stats.get("pore_class_percentages") or {}
-        for class_id, count in totals.items():
-            class_name = CLASS_NAMES.get(str(class_id), f"class_{class_id}")
-            rows.append({"metric": f"{class_name} pixels", "value": str(count)})
-            pct = percentages.get(str(class_id), percentages.get(int(class_id), None) if str(class_id).isdigit() else None)
-            if pct is not None:
-                rows.append({"metric": f"{class_name} percent", "value": f"{float(pct):.4f}"})
-
-    coco_path = RESULTS / "step3_coco_dataset" / "pore_annotations.json"
-    if not coco_path.exists():
-        coco_path = RESULTS / "step3_coco_dataset" / "annotations.json"
-    if coco_path.exists():
-        coco = json.loads(coco_path.read_text())
-        rows.extend(
-            [
-                {"metric": "coco_images", "value": str(len(coco.get("images", [])))},
-                {"metric": "coco_annotations", "value": str(len(coco.get("annotations", [])))},
-            ]
-        )
-
-    rows.extend(confirmatory_split_summary_rows())
-    return rows
+    return confirmatory_split_summary_rows()
 
 
 def plot_class_balance() -> None:
@@ -425,7 +413,8 @@ def plot_class_balance() -> None:
         fig,
         ax,
         "Operational class distribution",
-        f"Direct counts from {image_count} saved label masks; mineral values 2 and 255 are combined.",
+        f"Direct counts from {image_count} lossless label masks; source values "
+        "0/1/255 map to C0/C1/C2.",
     )
     save_figure(fig, "fig_01_class_balance")
 
@@ -870,9 +859,9 @@ def plot_study_workflow() -> None:
 
     stages = [
         ((0.02, 0.38), "Microscopy data", "100 retained tiles\n2048 x 2048 px", COLORS["blue"]["xlight"], COLORS["blue"]["mid"], "-"),
-        ((0.185, 0.38), "Label construction", "pore mask +\nring mask", COLORS["blue"]["xlight"], COLORS["blue"]["mid"], "-"),
+        ((0.185, 0.38), "Recovered label\nsources", "pore candidates +\nstored ring annotations", COLORS["blue"]["xlight"], COLORS["blue"]["mid"], "-"),
         ((0.35, 0.38), "Operational mask", "C0 / C1 / C2\nlabel mask", COLORS["olive"]["xlight"], COLORS["olive"]["mid"], "-"),
-        ((0.515, 0.38), "Grouped partitions", "grouped split\nmanifest", COLORS["gold"]["xlight"], COLORS["gold"]["mid"], "--"),
+        ((0.515, 0.38), "Frozen partitions", "series-disjoint by\nfilename; 74 / 5 / 21", COLORS["gold"]["xlight"], COLORS["gold"]["mid"], "--"),
         ((0.68, 0.38), "Model fitting", "training + validation\nonly", COLORS["orange"]["xlight"], COLORS["orange"]["mid"], "--"),
         ((0.845, 0.38), "Retrospective eval.", "one locked pass\n+ error audit", COLORS["pink"]["xlight"], COLORS["pink"]["mid"], "--"),
     ]
@@ -1092,11 +1081,29 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     mode.add_argument(
+        "--class-balance-only",
+        action="store_true",
+        help=(
+            "Regenerate only Figure 1 and the frozen split-count dataset table. "
+            "This mode reads saved label masks and the frozen split manifest, "
+            "but never loads experiment summaries, predictions, or metrics."
+        ),
+    )
+    mode.add_argument(
         "--study-workflow-only",
         action="store_true",
         help=(
             "Regenerate only Figure 10. This mode does not load microscopy "
             "images, annotations, experiment summaries, predictions, or metrics."
+        ),
+    )
+    mode.add_argument(
+        "--architecture-only",
+        action="store_true",
+        help=(
+            "Regenerate only the source-derived model-architecture schematic "
+            "(Figure 9). This mode does not load microscopy images, annotations, "
+            "experiment summaries, predictions, or metrics."
         ),
     )
     return parser.parse_args()
@@ -1108,9 +1115,23 @@ def main() -> None:
     FIGURES.mkdir(parents=True, exist_ok=True)
     TABLES.mkdir(parents=True, exist_ok=True)
 
+    if args.class_balance_only:
+        plot_class_balance()
+        write_dataset_summary()
+        print(
+            "Wrote Figure 1 and the frozen split-count dataset table to "
+            f"{ASSETS.relative_to(ROOT)}"
+        )
+        return
+
     if args.study_workflow_only:
         plot_study_workflow()
         print(f"Wrote Figure 10 to {FIGURES.relative_to(ROOT)}")
+        return
+
+    if args.architecture_only:
+        plot_model_architecture()
+        print(f"Wrote Figure 9 to {FIGURES.relative_to(ROOT)}")
         return
 
     if args.curated_only:
