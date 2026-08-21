@@ -56,7 +56,8 @@ aggregate SHA-256 under the same filename/NUL/raw-bytes/NUL algorithm is
 No tile or visible acquisition-series prefix crosses a partition. The data
 owner must still confirm that the four leading identifiers correspond to
 independent source mosaics or specimens. Until then, results from this split
-are described as provisional source-grouped evidence.
+are described as provisional filename-series-disjoint evidence, without claiming that the
+filename series are independent specimens, mosaics, or acquisitions.
 
 ## Frozen primary model configuration
 

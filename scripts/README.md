@@ -24,6 +24,17 @@ Run the data-contract check without research data or PyTorch:
 python3 scripts/run_public_smoke.py
 ```
 
+Generate the descriptive split/class table only in the private checkout that
+contains the authenticated split, annotation index, and lossless masks:
+
+```bash
+python3 scripts/generate_dataset_split_table.py
+```
+
+The generator verifies those inputs before decoding masks and publishes an
+atomic CSV/LaTeX/JSON bundle with exact counts and generator provenance. It
+does not read predictions or participate in model selection.
+
 Regenerate paper figures and tables only in the private checkout containing the
 required microscopy and local result inputs:
 
@@ -112,6 +123,49 @@ before reading any held-out image or target byte, then evaluates B0, B1, and B2
 together once on all 21 native tiles. It is not a validation or model-selection
 entry point.
 
+After the 15-cell selected-method lock is frozen, per-tile validation-screen
+diagnostics can be regenerated on an allocated L40S without selecting a new
+winner or resolving any locked retrospective file path:
+
+```bash
+python3 scripts/report_validation_screen_tiles.py \
+  --selected-method-lock config/selected_method_lock.json \
+  --device cuda
+```
+
+After all six authenticated neural evaluations and the classical evaluation
+exist, build the strict input manifest from their two content-addressed IDs:
+
+```bash
+python3 scripts/build_publication_results_manifest.py \
+  --neural-freeze-id <neural-freeze-identity> \
+  --classical-fit-id <classical-fit-identity>
+```
+
+The builder accepts no evaluator paths, method names, checkpoint hashes, or
+scientific identities. It verifies the canonical neural freeze and classical
+fit, derives all seven evaluator directories, hashes every required artifact,
+cross-checks every neural evaluator/source/selected-lock attestation, every raw
+and semantic checkpoint identity, and every classical lock/source/B2-model
+attestation against those verified artifacts. It then preflights the complete
+document through the assembler's strict v2 validators. It creates
+`publication_results_inputs.json` at the repository root and refuses to
+overwrite it. This local evidence manifest remains ignored because it
+identifies private result paths and hashes.
+
+Assemble the publication package only from that generated manifest. The output
+directory must not already exist:
+
+```bash
+python3 scripts/assemble_publication_results.py \
+  --input-manifest publication_results_inputs.json \
+  --output-dir results/publication_results
+```
+
+This assembler recomputes confusion-derived metrics, keeps seed variability
+separate from paired whole-tile resampling, and fails closed rather than
+inventing missing curves, qualitative panels, physical scale, or timing.
+
 ## Important Scripts
 
 | Script | Purpose |
@@ -129,6 +183,10 @@ entry point.
 | `fit_classical_comparators.py` | Fits and freezes B0/B1/B2 comparators from training labels only, outside the neural screen |
 | `aire_locked_classical_evaluation.slurm` | Non-array `nodes`-partition wrapper for the sole classical held-out pass |
 | `evaluate_locked_classical_comparators.py` | Authenticates and evaluates all three frozen classical comparators exactly once |
+| `report_validation_screen_tiles.py` | Reconstructs five-tile, validation-only screen diagnostics without changing the frozen winner |
+| `build_publication_results_manifest.py` | Derives and authenticates the strict v2 assembler manifest from only the canonical neural-freeze and classical-fit IDs |
+| `assemble_publication_results.py` | Builds authenticated result tables and standardised figures from hash-bound evaluator outputs |
+| `generate_dataset_split_table.py` | Builds the authenticated descriptive split/class-count table bundle |
 | `generate_publication_assets.py` | Rebuilds `paper_assets/` from private local inputs; not a clean-public reproduction command |
 | `audit_public_snapshot.py` | Audits a source selection, Git tracked tree, or complete exported snapshot |
 | `export_public_snapshot.py` | Materializes the reviewed allowlist at a fresh path outside the mixed checkout |

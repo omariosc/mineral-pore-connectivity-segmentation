@@ -30,6 +30,7 @@ from scripts.evaluate_confirmatory_checkpoint import (
     curves_from_histograms,
     gate_reference_diagnostic,
     infer_model_config_from_state,
+    load_authenticated_checkpoint,
     load_lossless_target_mask_bytes,
     load_verified_selected_method_lock,
     mask_corpus_sha256,
@@ -47,6 +48,7 @@ from scripts.evaluate_confirmatory_checkpoint import (
     validate_checkpoint_split_isolation,
     validate_checkpoint_target_provenance,
     validate_checkpoint_training_seed,
+    validate_loaded_checkpoint_semantic_identity,
     validate_neural_freeze_locked_evaluation_identity,
     validate_locked_inference_runtime,
     validate_locked_evaluator_parameters,
@@ -312,6 +314,225 @@ def test_publication_style_locks_class_encoding_and_pr_as_primary() -> None:
     assert list(plt.rcParams["font.family"]) == ["sans-serif"]
     assert list(plt.rcParams["font.sans-serif"][:2]) == ["Arial", "Helvetica"]
     plt.close("all")
+
+
+def test_qualitative_figure_has_deterministic_evidence_error_and_tile_labels(
+    monkeypatch, tmp_path
+) -> None:
+    image = np.asarray([[20, 80], [140, 220]], dtype=np.uint8)
+    target = np.asarray([[0, 1], [2, 0]], dtype=np.uint8)
+    prediction = np.asarray([[1, 0], [0, 0]], dtype=np.uint8)
+    probabilities = np.asarray(
+        [
+            [[0.90, 0.10], [0.20, 0.40]],
+            [[0.05, 0.80], [0.30, 0.20]],
+            [[0.05, 0.10], [0.50, 0.40]],
+        ],
+        dtype=np.float32,
+    )
+    evidence = evaluator.qualitative_evidence_display_uint8(probabilities, "R3")
+    assert evidence.tolist() == [
+        [[230, 26], [51, 102]],
+        [[13, 204], [77, 51]],
+    ]
+    categories = evaluator.qualitative_error_categories(target, prediction)
+    assert categories.tolist() == [[1, 2], [3, 0]]
+    assert evaluator.QUALITATIVE_ERROR_CATEGORY_LABELS == {
+        1: "Reference C0 misclassified",
+        2: "Reference C1 misclassified",
+        3: "Reference C2 misclassified",
+    }
+
+    file_name = "pdo2_24_segment_0_0.png"
+    native_contract = evaluator.qualitative_figure_contract(
+        "R3", image_id=17, file_name=file_name
+    )
+    conditional_contract = evaluator.qualitative_figure_contract(
+        "C2-F", image_id=17, file_name=file_name
+    )
+    assert len(native_contract["panel_titles"]) == 6
+    assert native_contract["tile_label"] == f"Tile ID 17 | {file_name}"
+    assert "same native three-class softmax" in native_contract[
+        "raw_evidence_relationship"
+    ]
+    assert "native 3-class argmax" in native_contract["panel_titles"][4]
+    assert "fixed pore gate" in conditional_contract["raw_evidence_relationship"]
+    assert "fixed-gate composition" in conditional_contract["panel_titles"][4]
+    assert native_contract["historical_metric_values_included"] is False
+    scale_gate = native_contract["physical_scale_author_evidence_gate"]
+    assert scale_gate == {
+        "status": "open_author_evidence_required",
+        "scale_bar_shown": False,
+        "pixel_size_shown": False,
+        "required_evidence": "authenticated pixel size or scale-bar metadata",
+        "evaluation_blocking": False,
+    }
+
+    captured = []
+
+    def capture_figure(figure, path, *args, **kwargs) -> None:
+        captured.append((figure, Path(path).suffix))
+
+    from matplotlib.figure import Figure
+
+    monkeypatch.setattr(Figure, "savefig", capture_figure)
+    returned = evaluator.plot_qualitative_triptych(
+        image,
+        target,
+        prediction,
+        raw_c0_evidence_uint8=evidence[0],
+        raw_c1_evidence_uint8=evidence[1],
+        candidate="R3",
+        image_id=17,
+        file_name=file_name,
+        output_dir=tmp_path,
+    )
+    assert returned == native_contract
+    assert [suffix for _, suffix in captured] == [".pdf", ".png"]
+    figure = captured[0][0]
+    assert tuple(figure.get_size_inches()) == pytest.approx((8.2, 6.4))
+    assert len(figure.axes) == 6
+    assert [axis.get_title() for axis in figure.axes] == native_contract[
+        "panel_titles"
+    ]
+    assert np.array_equal(np.asarray(figure.axes[0].images[0].get_array()), image)
+    assert np.array_equal(np.asarray(figure.axes[1].images[0].get_array()), target)
+    assert np.array_equal(
+        np.ma.getdata(figure.axes[2].images[0].get_array()), evidence[0]
+    )
+    assert np.array_equal(
+        np.ma.getdata(figure.axes[3].images[0].get_array()), evidence[1]
+    )
+    assert np.array_equal(
+        np.asarray(figure.axes[4].images[0].get_array()), prediction
+    )
+    rendered_errors = figure.axes[5].images[1].get_array()
+    assert np.array_equal(np.ma.getdata(rendered_errors), categories)
+    assert np.array_equal(np.ma.getmaskarray(rendered_errors), categories == 0)
+
+    visible_text = " ".join(
+        [text.get_text() for text in figure.texts]
+        + [axis.get_title() for axis in figure.axes]
+        + [text.get_text() for legend in figure.legends for text in legend.texts]
+    )
+    assert native_contract["tile_label"] in visible_text
+    assert all(class_name in visible_text for class_name in ("C0", "C1", "C2"))
+    assert "Held-out test" not in visible_text
+    assert all(
+        metric_name not in visible_text
+        for metric_name in ("IoU", "Dice", "accuracy", "AUC", "AP ", "95%")
+    )
+    publication_font_sizes = [
+        text.get_fontsize()
+        for text in figure.texts
+    ] + [
+        axis.title.get_fontsize() for axis in figure.axes
+    ] + [
+        text.get_fontsize()
+        for legend in figure.legends
+        for text in legend.texts
+    ]
+    assert min(publication_font_sizes) >= 10.5
+
+
+def test_publication_pdf_fonts_are_embeddable_type_42() -> None:
+    plt = evaluator._configure_matplotlib()
+    assert plt.rcParams["pdf.fonttype"] == 42
+    assert plt.rcParams["ps.fonttype"] == 42
+
+
+def test_publication_scope_and_interval_wording_is_explicit() -> None:
+    assert evaluator.LOCKED_RETROSPECTIVE_PARTITION_LABEL == (
+        "Locked retrospective evaluation partition"
+    )
+    assert evaluator.WITHIN_SERIES_WHOLE_TILE_INTERVAL_LABEL == (
+        "95% within-series whole-tile sensitivity intervals"
+    )
+
+
+def test_neural_publication_plots_render_the_locked_partition_labels(
+    monkeypatch, tmp_path
+) -> None:
+    from matplotlib.figure import Figure
+
+    captured = []
+
+    def capture_figure(figure, path, *args, **kwargs) -> None:
+        captured.append(figure)
+
+    monkeypatch.setattr(Figure, "savefig", capture_figure)
+    confusion = np.asarray(
+        [[12, 2, 1], [3, 10, 2], [1, 1, 18]], dtype=np.int64
+    )
+    evaluator.plot_confusion_matrix(confusion, tmp_path, tile_count=3)
+
+    positive = np.zeros((3, 8), dtype=np.int64)
+    negative = np.zeros((3, 8), dtype=np.int64)
+    positive[:, 6] = 10
+    negative[:, 1] = 10
+    evaluator.plot_curves(positive, negative, tmp_path, tile_count=3)
+
+    aggregate = evaluator.metrics_from_confusion(confusion)
+    intervals = {}
+    for class_id in range(3):
+        for metric in ("iou", "dice"):
+            value = aggregate["per_class"][class_id][metric]
+            intervals[f"class_{class_id}.{metric}"] = {
+                "lower": max(0.0, value - 0.05),
+                "upper": min(1.0, value + 0.05),
+            }
+    evaluator.plot_class_metric_summary(
+        aggregate,
+        {"intervals": intervals},
+        tmp_path,
+        tile_count=3,
+    )
+
+    figures = []
+    seen = set()
+    for figure in captured:
+        if id(figure) not in seen:
+            figures.append(figure)
+            seen.add(id(figure))
+    visible_text = " ".join(
+        text
+        for figure in figures
+        for text in (
+            [item.get_text() for item in figure.texts]
+            + [axis.get_title(loc="left") for axis in figure.axes]
+            + [item.get_text() for axis in figure.axes for item in axis.texts]
+        )
+    )
+    assert "Locked retrospective evaluation partition" in visible_text
+    assert "95% within-series whole-tile sensitivity intervals" in visible_text
+    assert "Held-out test" not in visible_text
+    assert "whole-tile bootstrap intervals" not in visible_text
+
+    metric_figure = next(
+        figure
+        for figure in figures
+        if figure._suptitle is not None
+        and figure._suptitle.get_text() == "Per-class IoU and Dice"
+    )
+    # Attach a renderer explicitly so this geometry assertion is backend-stable.
+    # Some local test environments construct figures with FigureCanvasBase even
+    # though the publication writer itself uses Agg.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    FigureCanvasAgg(metric_figure)
+    metric_figure.canvas.draw()
+    renderer = metric_figure.canvas.get_renderer()
+    subtitle = next(
+        item
+        for item in metric_figure.texts
+        if "within-series whole-tile sensitivity intervals" in item.get_text()
+    )
+    assert not metric_figure._suptitle.get_window_extent(renderer).overlaps(
+        subtitle.get_window_extent(renderer)
+    )
+    assert not subtitle.get_window_extent(renderer).overlaps(
+        metric_figure.axes[0].get_window_extent(renderer)
+    )
 
 
 def test_model_structure_handles_multiscale_deep_supervision_state():
@@ -1040,6 +1261,57 @@ def test_canonical_output_reservation_blocks_repackaged_same_cell(tmp_path):
     assert second_sha != first_sha
     with pytest.raises(FileExistsError, match="forbids a second pass"):
         reserve_single_pass_output(output_dir, second_sha, identity)
+
+
+def test_post_load_semantic_identity_rejects_toctou_checkpoint_swap(
+    monkeypatch, tmp_path
+):
+    expected = "a" * 64
+    swapped = "b" * 64
+    loaded_checkpoint = {"model_state_dict": {"weight": object()}}
+    monkeypatch.setattr(
+        evaluator,
+        "_torch_load_trusted",
+        lambda path, device: loaded_checkpoint,
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "tensor_state_dict_semantic_sha256",
+        lambda state: swapped,
+    )
+
+    # The raw path may have passed its earlier freeze check; the atomic helper
+    # must still reject a different tensor state returned by the safe loader.
+    with pytest.raises(ValueError, match="semantic SHA-256"):
+        load_authenticated_checkpoint(
+            tmp_path / "authenticated-before-load.pth",
+            "cpu",
+            {"checkpoint_state_dict_semantic_sha256": expected},
+        )
+
+
+def test_post_load_semantic_identity_accepts_authenticated_tensor_state(
+    monkeypatch, tmp_path
+):
+    expected = "a" * 64
+    loaded_checkpoint = {"model_state_dict": {"weight": object()}}
+    monkeypatch.setattr(
+        evaluator,
+        "_torch_load_trusted",
+        lambda path, device: loaded_checkpoint,
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "tensor_state_dict_semantic_sha256",
+        lambda state: expected,
+    )
+    observed_checkpoint, observed_sha = load_authenticated_checkpoint(
+        tmp_path / "authenticated.pth",
+        "cpu",
+        {"checkpoint_state_dict_semantic_sha256": expected},
+    )
+    assert observed_checkpoint is loaded_checkpoint
+    assert observed_sha == expected
 
 
 def test_campaign_alias_resolves_to_same_freeze_reservation(tmp_path):

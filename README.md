@@ -19,7 +19,7 @@ the public data contract can be checked without access to the research images.
 > allowed patches from the same source image to cross partitions, and several
 > old result graphics used estimated or synthetic values. Those graphics and
 > summaries are excluded from the public release. Publication metrics must come
-> from the group-disjoint confirmatory protocol and locked evaluator described
+> from the filename-series-disjoint confirmatory protocol and locked evaluator described
 > below.
 
 ## Five-minute public smoke test
@@ -75,7 +75,7 @@ data owner before results are treated as final.
 | Pixel classification | Recovered threshold/ring rule | Lossless `0/1/255` masks | Authoritative stored targets; generator version pending confirmation |
 | COCO indexing | `src/step3_generate_coco_dataset.py` | COCO JSON and image copies | Preserve IDs, names, dimensions, and legacy polygons |
 | Patch training | `scripts/train_patches.py` | Validation-selected checkpoint and run metadata | Train without splitting source images across partitions |
-| Locked evaluation | `scripts/evaluate_confirmatory_checkpoint.py` | JSON/CSV metrics and publication plots | Evaluate the selected checkpoint once on native held-out tiles |
+| Locked evaluation | `scripts/evaluate_confirmatory_checkpoint.py` | JSON/CSV metrics and publication plots | Evaluate the selected checkpoint once on the native locked retrospective evaluation tiles |
 
 `run_pipeline.py` and `src/step1_detect_yellow_rings.py` through
 `src/step3_generate_coco_dataset.py` are historical recovery utilities, not the
@@ -86,8 +86,9 @@ local prerequisite.
 The repaired trainer selects checkpoints with the harmonic mean of C0 and C1
 validation IoU, reloads the selected state, and records the checkpoint,
 source-code, split, normalization, architecture, input, and target provenance.
-It runs in validation-only mode and never constructs the held-out loader. The
-locked evaluator is the sole test consumer and applies no learned or tuned
+It runs in validation-only mode and never constructs the locked retrospective
+evaluation loader. The locked evaluator is the sole evaluation-partition
+consumer and applies no learned or tuned
 post-processing.
 
 ## Installation
@@ -151,7 +152,7 @@ Scientific primary/comparator retraining is lock-bound and must use
 `aire_selected_retrain.slurm`; changing only a local model flag does not create
 a confirmatory comparator result. After both three-seed neural retraining
 campaigns complete, build and retain the content-addressed neural freeze before
-any classical held-out evaluation:
+any classical locked retrospective evaluation:
 
 ```bash
 python3 scripts/build_neural_freeze_manifest.py \
@@ -270,16 +271,27 @@ python3 scripts/run_public_smoke.py
 python3 -m unittest tests.test_public_smoke tests.test_public_release
 python3 scripts/audit_public_snapshot.py
 python3 -m pytest -o addopts='' -q \
-  tests/test_patch_dataset.py \
+  tests/test_public_smoke.py \
+  tests/test_public_release.py \
+  tests/test_checkpoint_security.py \
+  tests/test_publication_assets.py \
   tests/test_augmentations.py \
+  tests/test_patch_dataset.py \
   tests/test_patch_trainer_selection.py \
-  tests/test_confirmatory_evaluator.py \
-  tests/test_model_resolution.py \
-  tests/test_aire_confirmatory_slurm.py \
+  tests/test_conditional_pore_loss.py \
+  tests/test_hierarchical_pore_loss.py \
+  tests/test_pyramid_context.py \
+  tests/test_screen_selection.py \
   tests/test_neural_freeze.py \
+  tests/test_confirmatory_evaluator.py \
   tests/test_classical_comparators.py \
   tests/test_classical_evaluator.py \
-  tests/test_publication_assets.py
+  tests/test_dataset_split_table.py \
+  tests/test_model_resolution.py \
+  tests/test_aire_confirmatory_slurm.py \
+  tests/test_validation_screen_reporter.py \
+  tests/test_publication_results_manifest_builder.py \
+  tests/test_publication_results_assembler.py
 ```
 
 The focused ML tests require the complete ML environment. GitHub Actions uses

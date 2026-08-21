@@ -88,11 +88,14 @@ classes.
 
 ## Candidate family under code verification
 
-All candidates use the same source-grouped training/validation partitions,
+All candidates use the same filename-series-disjoint training/validation partitions,
 lossless target masks, seeded symmetry augmentation, optimizer, schedule, epoch
 budget, stopping rule, model family, native-tile validation, and screen seeds.
 Only the explicitly named output formulation, objective, input channels, and
 training context below may differ.
+
+The filename-series label does not assert specimen-, mosaic-, or
+acquisition-level independence.
 
 ### R3: flat three-class reference
 

@@ -38,12 +38,17 @@ python3 -m pytest -o addopts='' -q \
   tests/test_pyramid_context.py \
   tests/test_model_resolution.py \
   tests/test_screen_selection.py \
+  tests/test_checkpoint_security.py \
   tests/test_aire_confirmatory_slurm.py \
   tests/test_confirmatory_evaluator.py \
   tests/test_neural_freeze.py \
   tests/test_classical_comparators.py \
   tests/test_classical_evaluator.py \
-  tests/test_publication_assets.py
+  tests/test_dataset_split_table.py \
+  tests/test_publication_assets.py \
+  tests/test_validation_screen_reporter.py \
+  tests/test_publication_results_assembler.py \
+  tests/test_publication_results_manifest_builder.py
 python3 -m unittest tests.test_public_smoke tests.test_public_release
 python3 scripts/audit_public_snapshot.py --selection-only --list
 ```
@@ -208,6 +213,43 @@ reserves
 before held-out discovery. A caller-campaign change, copied or symlinked
 artifact, JSON reformat, timestamp edit, or identical model reserialization
 cannot create a second pass for that pair.
+
+## 7. Authenticate and assemble the publication results
+
+After all six neural cells and the single classical evaluation report
+`status: complete`, generate the assembler input from the two canonical IDs:
+
+```bash
+python3 scripts/build_publication_results_manifest.py \
+  --neural-freeze-id <neural-freeze-identity> \
+  --classical-fit-id <classical-fit-identity>
+```
+
+Do not hand-author this JSON. The builder accepts no result paths, method
+names, checkpoint hashes, or scientific identities. It re-verifies the
+content-addressed freeze and fit, derives the six canonical neural directories
+and one canonical classical directory, computes every artifact SHA-256, and
+cross-binds the neural evaluator/source/selected-lock attestations, the raw and
+semantic identity of every neural checkpoint, and the classical
+raw-lock/source/B2-model attestations before running the assembler's complete
+evidence validation. It then creates the repository-root
+`publication_results_inputs.json`. Existing manifests, symbolic paths, partial
+curve pairs, undeclared qualitative figures, missing provenance, and identity
+disagreement all fail closed. The generated manifest is local, ignored
+evidence and must not be added to the public repository.
+
+Then create a new publication-results directory:
+
+```bash
+python3 scripts/assemble_publication_results.py \
+  --input-manifest publication_results_inputs.json \
+  --output-dir results/publication_results
+```
+
+The assembler reauthenticates every bound byte, reconstructs metrics from
+per-tile confusion counts, preserves the prespecified seed-42 qualitative
+panel only when the evaluator declared its exact PDF/PNG pair, and refuses to
+invent missing curves, panels, physical scale, timing, or metric values.
 
 ## Required evidence bundle
 
