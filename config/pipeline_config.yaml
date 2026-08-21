@@ -1,0 +1,279 @@
+# Mineral Pore Segmentation Pipeline Configuration
+# This file contains all configurable parameters for the pipeline
+
+# Project paths
+paths:
+  input_dir: "original_images"  # Annotated microscopy images with yellow rings
+  output_dir: "processed"
+  masks_dir: "processed/masks"
+  downscaled_dir: "processed/downscaled"
+  annotations_dir: "results/step3_coco_dataset"  # Ring-based 3-class annotations
+  models_dir: "models"
+  results_dir: "results"
+  logs_dir: "logs"
+
+# Image processing parameters
+image_processing:
+  # Original and target image dimensions
+  original_size: [2048, 2048]
+  target_size: [512, 512]
+  min_size: [96, 96]
+  
+  # Downsampling method
+  downsampling:
+    method: "area"  # Options: "area", "cubic", "linear", "lanczos"
+    preserve_edges: true
+    anti_alias: true
+
+# Yellow circle detection parameters
+yellow_detection:
+  # Target yellow color in RGB and HSV
+  target_color_rgb: [207, 198, 80]  # #cfc650
+  target_color_hex: "#cfc650"
+  
+  # HSV color space thresholds
+  hsv_ranges:
+    # Lower bounds [H, S, V]
+    lower: [20, 100, 100]
+    # Upper bounds [H, S, V]  
+    upper: [35, 255, 255]
+  
+  # Tolerance for color variations
+  color_tolerance: 15
+  
+  # Minimum area for yellow regions (in pixels)
+  min_area: 10
+
+# Gap closing parameters
+gap_closing:
+  # Morphological operations
+  morphology:
+    kernel_size: 5
+    iterations: 2
+    operation: "close"  # Options: "close", "dilate_erode"
+  
+  # Contour approximation
+  contour:
+    epsilon_factor: 0.02  # Factor of contour perimeter
+    min_gap_size: 10  # Minimum gap size to close (pixels)
+    max_gap_size: 50  # Maximum gap size to close (pixels)
+
+# Pore extraction parameters
+pore_extraction:
+  # Minimum pore area (in pixels at original resolution)
+  min_pore_area: 20
+  
+  # Maximum pore area (in pixels at original resolution)
+  max_pore_area: 10000
+  
+  # Handle multiple pores in single yellow circle
+  split_clustered_pores: true
+  
+  # Boundary handling
+  include_boundary_pores: true
+  boundary_padding: 5
+
+# Preprocessing parameters
+preprocessing:
+  input_size: [2048, 2048]
+  output_size: [512, 512]
+  downsampling_method: "edge_preserving"  # Options: area_interpolation, gaussian_pyramid, edge_preserving, anti_aliased
+  preserve_edges: true
+  anti_aliasing: true
+  edge_threshold: 50
+  handle_boundary_pores: true
+  padding_size: 10
+
+# COCO annotation parameters
+coco_format:
+  # Dataset information
+  info:
+    description: "Mineral Pore Segmentation Dataset"
+    version: "1.0"
+    year: 2024
+    contributor: "University of Leeds"
+  
+  # License information
+  license:
+    id: 1
+    name: "Research Use Only"
+    url: ""
+  
+  # Categories (3-class)
+  categories:
+    - id: 0
+      name: "disconnected_pore"  # Inside yellow rings
+      supercategory: "pore"
+    - id: 1
+      name: "connected_pore"     # Outside yellow rings
+      supercategory: "pore"
+    - id: 2
+      name: "mineral"            # Non-black pixels
+      supercategory: "material"
+  
+  # Annotation format
+  segmentation_type: "polygon"  # Options: "polygon", "rle"
+  
+  # Polygon simplification
+  simplify_polygons: true
+  simplification_tolerance: 2.0
+
+# GPU processing parameters
+gpu_processing:
+  # Batch processing
+  batch_size: 24
+  num_workers: 8
+  
+  # Memory management
+  max_gpu_memory_fraction: 0.9
+  enable_mixed_precision: true
+  
+  # Multi-GPU settings
+  num_gpus: 2
+  distributed_backend: "nccl"
+
+# Model training parameters
+model:
+  # Architecture
+  architecture: "unet"  # Options: unet, attention_unet, improved_unet, multiscale_attention_unet
+  base_features: 32  # Reduced for MPS memory constraints (doubled at each level)
+  bilinear: true  # Use bilinear upsampling vs transposed conv
+  
+  # Model specifics
+  in_channels: 1  # Grayscale images
+  out_channels: 3  # 3-class segmentation (disconnected pores, connected pores, minerals)
+  num_classes: 3  # Alternative naming for compatibility
+  
+  # Geological adaptations
+  use_attention: true
+  use_deep_supervision: false
+  deep_supervision: false  # Alternative naming for multi-scale attention UNet
+  dropout_rate: 0.2  # Dropout for regularization
+  
+  # Training parameters
+  epochs: 100
+  batch_size: 1  # Minimum batch size for MPS memory constraints
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adamw"  # Options: adam, sgd, adamw
+  scheduler: "cosine"  # Options: cosine, step, plateau
+  
+  # Loss function
+  loss:
+    type: "focal_dice"  # Reference stays focal_dice; prospective option: hierarchical_pore_connectivity
+    class_weights: [3.0, 2.0, 1.0]  # Higher weight for pores to balance against dominant mineral class [disconnected, connected, minerals]
+    dice_weight: 0.5
+    ce_weight: 0.5
+    focal_weight: 0.5  # For focal_dice loss
+    gamma: 2.0  # Focal loss focusing parameter
+    tversky_alpha: 0.7  # For Tversky loss (FP weight)
+    tversky_beta: 0.3   # For Tversky loss (FN weight)
+    # Sparse pore loss parameters
+    false_positive_weight: 10.0  # Heavy penalty for false positive pores
+    # Boundary-aware loss parameters
+    boundary_weight: 5.0  # Weight for pixels near boundaries
+    pore_boundary_weight: 10.0  # Extra weight for pore-mineral boundaries
+    # Topological loss parameters
+    topology_weight: 0.1  # Weight for topological consistency
+    connectivity_weight: 2.0  # Weight for connectivity preservation
+  
+  # Optimizer
+  optimizer: "adamw"
+  scheduler: "cosine"
+
+# Curriculum learning configuration
+curriculum:
+  enabled: false  # Enable curriculum learning
+  strategy: "progressive"  # Options: progressive, staged, adaptive
+  warmup_epochs: 5  # Number of warmup epochs with easy samples
+  difficulty_percentiles: [0.3, 0.6, 0.9, 1.0]  # Thresholds for sample difficulty
+  hard_negative_mining:
+    enabled: false
+    ratio: 0.3  # Ratio of hard negatives to keep
+    min_samples: 100  # Minimum samples per batch
+  
+  # Data split
+  train_val_split: 0.8
+  random_seed: 42
+  
+  # Checkpointing
+  save_frequency: 10
+  save_best_only: false
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 20
+    min_delta: 0.001
+
+# Validation parameters
+validation:
+  # Metrics to compute
+  metrics:
+    - "pixel_accuracy"
+    - "iou"
+    - "dice"
+    - "precision"
+    - "recall"
+    - "f1_score"
+  
+  # Visualization
+  visualize_predictions: true
+  save_visualization_freq: 10
+  
+  # Statistical analysis
+  compute_pore_statistics: true
+  statistics_output_format: "csv"
+
+# Logging configuration
+logging:
+  # Log level
+  level: "INFO"  # Options: "DEBUG", "INFO", "WARNING", "ERROR"
+  
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # File logging
+  log_to_file: true
+  max_file_size: "10MB"
+  backup_count: 5
+  
+  # Experiment tracking
+  use_tensorboard: true
+  use_wandb: false
+  wandb_project: "mineral-pore-segmentation"
+
+# Performance monitoring
+monitoring:
+  # Track processing times
+  log_timestamps: true
+  
+  # GPU monitoring
+  monitor_gpu_usage: true
+  gpu_log_frequency: 10  # seconds
+  
+  # Memory profiling
+  profile_memory: false
+  
+  # Progress bars
+  show_progress: true
+
+# AIRE HPC specific settings
+aire_hpc:
+  # Module versions
+  modules:
+    cuda: "12.6.2"
+    miniforge: "24.7.1"
+    pytorch: "2.5.1"
+  
+  # Queue settings
+  partition: "gpu"
+  time_limit: "04:00:00"
+  
+  # Resource allocation
+  cpus_per_task: 16
+  memory_per_cpu: "8G"
+  
+  # Email notifications
+  send_notifications: false
+  email: ""

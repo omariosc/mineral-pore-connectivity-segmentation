@@ -1,0 +1,29 @@
+{
+  "_instructions": [
+    "Template only: this file is not evidence that any asset has been approved.",
+    "Copy it to a private public_asset_approvals.yml or another controlled path, complete one entry per selected asset, and retain the written approval evidence outside Git.",
+    "JSON syntax is used because it is valid YAML 1.2 and can be parsed fail-closed with the Python standard library.",
+    "Figure 6 contains microscopy and annotation-derived raster payloads and remains local unless an exact completed entry explicitly authorises redistribution."
+  ],
+  "schema_version": 1,
+  "template_only": true,
+  "assets": [
+    {
+      "paths": [
+        "paper_assets/figures/example.pdf",
+        "paper_assets/figures/example.png",
+        "paper_assets/figures/example.svg"
+      ],
+      "asset_kind": "generated_figure",
+      "source_description": "",
+      "contains_source_image_pixels": false,
+      "contains_annotation_or_mask_pixels": false,
+      "copyright_owner": "",
+      "licence_identifier": "",
+      "written_approval_reference": "",
+      "approved_by": "",
+      "approval_date": "",
+      "approval_status": "pending"
+    }
+  ]
+}

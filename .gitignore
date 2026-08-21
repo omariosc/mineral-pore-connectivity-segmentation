@@ -1,0 +1,123 @@
+# Operating-system and editor noise
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+.claude/
+.codex/
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials/
+secrets/
+# Completed asset approvals may contain internal evidence references. Keep the
+# template public and pass the completed record explicitly to the exporter.
+config/public_asset_approvals.yml
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Runtime logs and local automation state
+*.log
+*.out
+*.err
+logs/
+crontab.txt
+CRON.log
+GITHUB_ACTIONS.log
+
+# Experiment tracking
+wandb/
+**/wandb/
+runs/
+lightning_logs/
+
+# Large/generated experiment artifacts
+original_images/
+labelled images/
+results/
+results/**/checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.npy
+*.npz
+*.pkl
+
+# Generated datasets and heavy result trees.
+# Keep curated summaries and paper_assets intentionally when needed.
+processed/
+/models/
+
+# Local manuscript authoring and source-design files
+Overleaf/
+*.pptx
+*.zip
+*.docx
+
+# Historical generated copies; curated release assets live in paper_assets/
+/figures/
+/tables/
+/manifest.json
+
+# Private manuscript/reference material
+papers/
+docs/*.pdf
+FINAL_MODEL.pdf
+FINAL_MODEL.md
+FINAL_MODEL_COMPREHENSIVE_UPDATE.md
+PAPER.txt
+MONITORING.md
+CRON.md
+SOTA_INNOVATIONS.md
+ABLATION.md
+TODO.md
+tasks/
+sample.png
+traditional_algorithms_comparison_table.txt
+
+# Public script allowlist. Other scripts are retained locally as historical,
+# user-specific, or exploratory utilities and are not part of the release.
+scripts/**
+!scripts/
+!scripts/README.md
+!scripts/train_patches.py
+!scripts/aire_confirmatory.slurm
+!scripts/aire_fit_classical_comparators.slurm
+!scripts/aire_locked_classical_evaluation.slurm
+!scripts/aire_locked_evaluation.slurm
+!scripts/aire_selected_retrain.slurm
+!scripts/aire_validation_screen.slurm
+!scripts/aire_validation_smoke.slurm
+!scripts/audit_public_snapshot.py
+!scripts/build_selected_method_lock.py
+!scripts/build_neural_freeze_manifest.py
+!scripts/build_smoke_preflight_manifest.py
+!scripts/evaluate_confirmatory_checkpoint.py
+!scripts/evaluate_locked_classical_comparators.py
+!scripts/export_public_snapshot.py
+!scripts/fit_classical_comparators.py
+!scripts/generate_publication_assets.py
+!scripts/record_protocol_cell_failure.py
+!scripts/run_public_smoke.py
+
+# Publication figures and tables remain available in the private checkout but
+# are excluded from the canonical code-and-documentation release. A later,
+# separately reviewed asset release must use exact allowlist entries and a
+# completed approval manifest.
+paper_assets/

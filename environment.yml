@@ -1,0 +1,30 @@
+name: mineral-pore-seg
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pytorch=2.5.1
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4
+  - numpy
+  - scipy
+  - scikit-image
+  - scikit-learn
+  - matplotlib
+  - pandas
+  - pillow
+  - pyyaml
+  - click
+  - tqdm
+  - jupyter
+  - pip
+  - pip:
+    - opencv-python
+    - pycocotools
+    - albumentations==2.0.8
+    - pytest
+    - pytest-cov

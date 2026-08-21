@@ -1,0 +1,2 @@
+# CPython 3.11, Linux x86_64, official PyTorch CPU index.
+torch==2.5.1+cpu --hash=sha256:07d7c9e069123d5af08b0cf0013d74f680b2d8be7d9e2cf561a52c90c55d9409

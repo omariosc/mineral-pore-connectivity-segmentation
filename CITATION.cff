@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite it using the metadata below."
+title: "Mineral Pore Connectivity Segmentation"
+authors:
+  - name: "Mineral Pore Segmentation Contributors"
+year: 2026
+license: MIT
+repository-code: "https://github.com/omariosc/mineral-pore-connectivity-segmentation"
+abstract: "Research code and reproducibility contracts for three-class pore-connectivity segmentation in geological microscopy images."

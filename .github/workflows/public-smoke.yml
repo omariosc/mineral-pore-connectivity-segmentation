@@ -1,0 +1,84 @@
+name: Public release checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  data-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        # actions/setup-python v5.4.0
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11.10"
+      - name: Install hash-locked smoke dependencies
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          --require-hashes --only-binary=:all:
+          -r .github/requirements/public-smoke-linux-py311.lock
+      - name: Compile source
+        run: python3 -m compileall src scripts config tests
+      - name: Run synthetic lossless-mask smoke test
+        run: python3 scripts/run_public_smoke.py
+      - name: Run dependency-light smoke and release-boundary tests
+        run: >-
+          python3 -m unittest
+          tests.test_public_smoke
+          tests.test_public_release
+      - name: Validate JSON and public snapshot boundary
+        run: |
+          python3 -m json.tool config/confirmatory_splits.json >/dev/null
+          python3 scripts/audit_public_snapshot.py
+
+  ml-unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        # actions/setup-python v5.4.0
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11.10"
+      - name: Install hash-locked focused test dependencies
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          --require-hashes --only-binary=:all:
+          -r .github/requirements/ml-unit-tests-linux-py311.lock
+      - name: Install hash-locked CPU PyTorch
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          --require-hashes --only-binary=:all: --no-deps
+          --index-url https://download.pytorch.org/whl/cpu
+          -r .github/requirements/torch-cpu-linux-py311.lock
+      - name: Run critical loader, loss, selection, evaluator, release, and asset tests
+        run: >-
+          python3 -m pytest -o addopts='' -q
+          tests/test_public_smoke.py
+          tests/test_public_release.py
+          tests/test_publication_assets.py
+          tests/test_augmentations.py
+          tests/test_patch_dataset.py
+          tests/test_patch_trainer_selection.py
+          tests/test_conditional_pore_loss.py
+          tests/test_hierarchical_pore_loss.py
+          tests/test_pyramid_context.py
+          tests/test_screen_selection.py
+          tests/test_neural_freeze.py
+          tests/test_confirmatory_evaluator.py
+          tests/test_classical_comparators.py
+          tests/test_classical_evaluator.py
+          tests/test_model_resolution.py
+          tests/test_aire_confirmatory_slurm.py
