@@ -35,6 +35,7 @@ import random
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -96,10 +97,7 @@ from src.training.screen_selection import (  # noqa: E402
 
 REPORT_SCHEMA_VERSION = 1
 EVIDENCE_KIND = "validation_screen_model_development_only"
-EVIDENCE_LABEL = (
-    "Model-development evidence from the frozen validation screen; not locked "
-    "retrospective evaluation evidence"
-)
+EVIDENCE_LABEL = "validation-only model development"
 CANONICAL_LOCK_IDENTIFIER = "config/selected_method_lock.json"
 CANONICAL_IMAGE_ROOT = "results/step3_coco_dataset/images"
 CANONICAL_MASK_ROOT = (
@@ -118,7 +116,52 @@ OUTPUT_FILE_NAMES = (
     "validation_screen_report.json",
     "validation_screen_metrics.csv",
     "r3_signed_margins.csv",
+    "validation_screen_candidate_seed_summary.csv",
+    "validation_screen_tile_diagnostics.csv",
+    "validation_screen_summary.tex",
+    "validation_screen_summary.pdf",
+    "validation_screen_summary.png",
 )
+PUBLICATION_SUMMARY_CSV_NAME = OUTPUT_FILE_NAMES[3]
+PUBLICATION_TILE_CSV_NAME = OUTPUT_FILE_NAMES[4]
+PUBLICATION_TEX_NAME = OUTPUT_FILE_NAMES[5]
+PUBLICATION_PDF_NAME = OUTPUT_FILE_NAMES[6]
+PUBLICATION_PNG_NAME = OUTPUT_FILE_NAMES[7]
+PUBLICATION_PNG_DPI = 600
+# Measured from the active ``cas-sc.cls`` as 468.3324 TeX pt / 72.27.
+CAS_SC_TEXT_WIDTH_INCHES = 6.480
+CAS_SUMMARY_HEIGHT_INCHES = 7.20
+PUBLICATION_CLASS_COLORS = {
+    0: "#B33A3A",
+    1: "#2E8B57",
+    2: "#4C78A8",
+}
+PUBLICATION_HARMONIC_COLOR = "#4C4C4C"
+PUBLICATION_METRICS = (
+    ("c0_iou", "C0 IoU", "c0.iou", PUBLICATION_CLASS_COLORS[0]),
+    ("c1_iou", "C1 IoU", "c1.iou", PUBLICATION_CLASS_COLORS[1]),
+    (
+        "c0_c1_harmonic_iou",
+        "C0/C1 harmonic IoU",
+        "selection.c0_c1_harmonic_iou",
+        PUBLICATION_HARMONIC_COLOR,
+    ),
+)
+PUBLICATION_TILE_METRICS = (
+    ("c0_iou", "Tile-level C0 IoU", PUBLICATION_CLASS_COLORS[0]),
+    ("c1_iou", "Tile-level C1 IoU", PUBLICATION_CLASS_COLORS[1]),
+    ("c2_iou", "Tile-level C2 IoU", PUBLICATION_CLASS_COLORS[2]),
+    (
+        "c0_c1_harmonic_iou",
+        "Tile-level C0/C1 harmonic IoU",
+        PUBLICATION_HARMONIC_COLOR,
+    ),
+)
+PUBLICATION_SEED_STYLES = {
+    42: {"marker": "o", "linestyle": "-", "markerfacecolor": "white"},
+    123: {"marker": "s", "linestyle": "--", "markerfacecolor": "white"},
+    2025: {"marker": "^", "linestyle": "-.", "markerfacecolor": "white"},
+}
 MARGIN_METRICS = (
     "overall.accuracy",
     "c0.iou",
@@ -1007,6 +1050,7 @@ def attach_signed_r3_margins(
             for name in MARGIN_METRICS:
                 margin_rows.append(
                     {
+                        "evidence_label": EVIDENCE_LABEL,
                         "scope": "same_seed",
                         "candidate": candidate,
                         "seed": int(seed),
@@ -1038,6 +1082,7 @@ def attach_signed_r3_margins(
             signed[name] = mean_values[name] - r3_means[name]
             margin_rows.append(
                 {
+                    "evidence_label": EVIDENCE_LABEL,
                     "scope": "three_seed_arithmetic_mean",
                     "candidate": candidate,
                     "seed": "",
@@ -1090,6 +1135,7 @@ def metric_csv_rows(cell_reports: Sequence[Mapping[str, Any]]) -> List[Dict[str,
                 rows.append(
                     {
                         "evidence_kind": EVIDENCE_KIND,
+                        "evidence_label": EVIDENCE_LABEL,
                         "candidate": cell["candidate"],
                         "seed": int(cell["seed"]),
                         "array_index": int(cell["array_index"]),
@@ -1126,6 +1172,667 @@ def metric_csv_rows(cell_reports: Sequence[Mapping[str, Any]]) -> List[Dict[str,
     return rows
 
 
+def _publication_metric_values(metrics: Mapping[str, Any]) -> Dict[str, float]:
+    """Return the fixed publication metrics without deriving a new selection score."""
+    vector = metric_vector(metrics)
+    by_class = {int(item["class_id"]): item for item in metrics["per_class"]}
+    if set(by_class) != {0, 1, 2}:
+        raise ValueError("Publication diagnostics require exact C0/C1/C2 metrics")
+    return {
+        "c0_iou": vector["c0.iou"],
+        "c1_iou": vector["c1.iou"],
+        "c2_iou": vector["c2.iou"],
+        "c0_c1_harmonic_iou": vector[
+            "selection.c0_c1_harmonic_iou"
+        ],
+    }
+
+
+def publication_summary_rows(
+    cell_reports: Sequence[Mapping[str, Any]],
+    candidate_summaries: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build one deterministic exact-lookup row for every candidate and seed."""
+    if len(cell_reports) != SCREEN_CELL_COUNT:
+        raise ValueError("Publication summary requires the complete 15-cell report")
+    by_pair = {
+        (str(cell["candidate"]), int(cell["seed"])): cell
+        for cell in cell_reports
+    }
+    expected_pairs = [
+        (candidate, int(seed))
+        for candidate in SCREEN_CANDIDATE_ORDER
+        for seed in SCREEN_SEEDS
+    ]
+    if list(by_pair) != expected_pairs:
+        raise ValueError(
+            "Publication summary requires candidate-major order and every seed"
+        )
+    summaries = {str(item["candidate"]): item for item in candidate_summaries}
+    if list(summaries) != list(SCREEN_CANDIDATE_ORDER):
+        raise ValueError(
+            "Publication summary requires one ordered aggregate per candidate"
+        )
+
+    rows: List[Dict[str, Any]] = []
+    for candidate, seed in expected_pairs:
+        cell = by_pair[(candidate, seed)]
+        summary = summaries[candidate]
+        if (
+            list(summary.get("seeds", [])) != list(SCREEN_SEEDS)
+            or int(summary.get("seed_count", -1)) != len(SCREEN_SEEDS)
+        ):
+            raise ValueError("Candidate aggregate does not contain all three seeds")
+        seed_margin = cell.get("signed_r3_margins")
+        mean_margin = summary.get("signed_r3_margins")
+        if not isinstance(seed_margin, Mapping) or not isinstance(
+            mean_margin, Mapping
+        ):
+            raise ValueError("Signed R3 margins must be attached before reporting")
+        if seed_margin.get("definition") != "candidate_minus_same_seed_R3":
+            raise ValueError("Seed-level R3 margin definition drifted")
+        if mean_margin.get("definition") != "candidate_mean_minus_R3_mean":
+            raise ValueError("Candidate-level R3 margin definition drifted")
+        values = _publication_metric_values(cell["pooled_metrics"])
+        mean_values = summary["three_seed_arithmetic_mean"]
+        sample_sd = summary["three_seed_sample_standard_deviation"]
+        seed_margin_values = seed_margin["values"]
+        mean_margin_values = mean_margin["values"]
+        row: Dict[str, Any] = {
+            "evidence_label": EVIDENCE_LABEL,
+            "candidate": candidate,
+            "seed": seed,
+            "array_index": int(cell["array_index"]),
+            "validation_tile_count": EXPECTED_VALIDATION_TILE_COUNT,
+            "selection_reference": "R3_from_existing_selected_method_lock",
+            "selection_performed_by_reporter": False,
+            "outcome_dependent_tile_choice_performed": False,
+        }
+        for key, _label, vector_key, _color in PUBLICATION_METRICS:
+            row[key] = values[key]
+            row[f"candidate_mean_{key}"] = float(mean_values[vector_key])
+            row[f"candidate_sample_sd_{key}"] = float(sample_sd[vector_key])
+            row[f"same_seed_{key}_margin_candidate_minus_r3"] = float(
+                seed_margin_values[vector_key]
+            )
+            row[f"candidate_mean_{key}_margin_candidate_minus_r3"] = float(
+                mean_margin_values[vector_key]
+            )
+        if any(
+            not math.isfinite(float(value))
+            for key, value in row.items()
+            if key.endswith("iou")
+            or "margin_candidate_minus_r3" in key
+        ):
+            raise ValueError("Publication summary contains a non-finite value")
+        rows.append(row)
+    return rows
+
+
+def publication_tile_rows(
+    cell_reports: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build all 75 fixed validation-tile diagnostic rows in locked order."""
+    if len(cell_reports) != SCREEN_CELL_COUNT:
+        raise ValueError("Tile diagnostics require the complete 15-cell report")
+    expected_pairs = [
+        (candidate, int(seed))
+        for candidate in SCREEN_CANDIDATE_ORDER
+        for seed in SCREEN_SEEDS
+    ]
+    observed_pairs = [
+        (str(cell["candidate"]), int(cell["seed"])) for cell in cell_reports
+    ]
+    if observed_pairs != expected_pairs:
+        raise ValueError("Tile diagnostics require the exact candidate/seed order")
+
+    canonical_tile_identities: Optional[List[Tuple[Any, ...]]] = None
+    rows: List[Dict[str, Any]] = []
+    for cell in cell_reports:
+        tiles = cell.get("per_tile")
+        if not isinstance(tiles, Sequence) or isinstance(tiles, (str, bytes)):
+            raise ValueError("Tile diagnostics require an explicit per-tile list")
+        if len(tiles) != EXPECTED_VALIDATION_TILE_COUNT:
+            raise ValueError("Tile diagnostics require exactly five validation tiles")
+        ordinals = [int(tile["validation_ordinal"]) for tile in tiles]
+        if ordinals != list(range(1, EXPECTED_VALIDATION_TILE_COUNT + 1)):
+            raise ValueError("Validation tiles must remain in fixed ordinal order")
+        identities = [
+            (
+                int(tile["validation_ordinal"]),
+                int(tile["image_id"]),
+                str(tile["file_name"]),
+                str(tile["input_image_sha256"]),
+                str(tile["target_mask_sha256"]),
+            )
+            for tile in tiles
+        ]
+        if canonical_tile_identities is None:
+            canonical_tile_identities = identities
+        elif identities != canonical_tile_identities:
+            raise ValueError("Validation-tile identities differ between screen cells")
+        for tile in tiles:
+            values = _publication_metric_values(tile["metrics"])
+            by_class = {
+                int(item["class_id"]): item for item in tile["metrics"]["per_class"]
+            }
+            rows.append(
+                {
+                    "evidence_label": EVIDENCE_LABEL,
+                    "candidate": str(cell["candidate"]),
+                    "seed": int(cell["seed"]),
+                    "array_index": int(cell["array_index"]),
+                    "validation_ordinal": int(tile["validation_ordinal"]),
+                    "image_id": int(tile["image_id"]),
+                    "file_name": str(tile["file_name"]),
+                    "input_image_sha256": str(tile["input_image_sha256"]),
+                    "target_mask_sha256": str(tile["target_mask_sha256"]),
+                    "c0_support_pixels": int(by_class[0]["support_pixels"]),
+                    "c1_support_pixels": int(by_class[1]["support_pixels"]),
+                    "c2_support_pixels": int(by_class[2]["support_pixels"]),
+                    **values,
+                    "selection_reference": "R3_from_existing_selected_method_lock",
+                    "outcome_dependent_tile_choice_performed": False,
+                }
+            )
+    if len(rows) != SCREEN_CELL_COUNT * EXPECTED_VALIDATION_TILE_COUNT:
+        raise RuntimeError("Tile diagnostic row count drifted")
+    return rows
+
+
+def _configure_publication_matplotlib() -> Any:
+    """Configure deterministic Arial/Helvetica-style Type-42 plotting."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": [
+                "Arial",
+                "Helvetica",
+                "Liberation Sans",
+                "DejaVu Sans",
+            ],
+            "mathtext.fontset": "dejavusans",
+            "font.size": 7.0,
+            "axes.titlesize": 7.8,
+            "axes.labelsize": 7.0,
+            "axes.edgecolor": "#333333",
+            "axes.linewidth": 0.7,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "xtick.color": "#333333",
+            "ytick.color": "#333333",
+            "xtick.labelsize": 6.2,
+            "ytick.labelsize": 6.2,
+            "text.color": "#222222",
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+        }
+    )
+    return plt
+
+
+def _publication_summary_maps(
+    summary_rows: Sequence[Mapping[str, Any]],
+    tile_rows: Sequence[Mapping[str, Any]],
+) -> Tuple[
+    Dict[Tuple[str, int], Mapping[str, Any]],
+    Dict[Tuple[str, int, int], Mapping[str, Any]],
+]:
+    expected_pairs = [
+        (candidate, int(seed))
+        for candidate in SCREEN_CANDIDATE_ORDER
+        for seed in SCREEN_SEEDS
+    ]
+    if len(summary_rows) != len(expected_pairs):
+        raise ValueError("Publication figure requires all 15 summary rows")
+    summary_by_pair = {
+        (str(row["candidate"]), int(row["seed"])): row
+        for row in summary_rows
+    }
+    if list(summary_by_pair) != expected_pairs:
+        raise ValueError("Publication figure summary row order drifted")
+    expected_tiles = [
+        (candidate, int(seed), ordinal)
+        for candidate, seed in expected_pairs
+        for ordinal in range(1, EXPECTED_VALIDATION_TILE_COUNT + 1)
+    ]
+    if len(tile_rows) != len(expected_tiles):
+        raise ValueError("Publication figure requires all 75 tile rows")
+    tile_by_key = {
+        (
+            str(row["candidate"]),
+            int(row["seed"]),
+            int(row["validation_ordinal"]),
+        ): row
+        for row in tile_rows
+    }
+    if list(tile_by_key) != expected_tiles:
+        raise ValueError("Publication figure tile row order drifted")
+    return summary_by_pair, tile_by_key
+
+
+def _write_publication_tex(
+    path: Path,
+    summary_rows: Sequence[Mapping[str, Any]],
+) -> None:
+    """Write a stable paper-ready figure fragment and descriptive summary table."""
+    expected_pairs = [
+        (candidate, int(seed))
+        for candidate in SCREEN_CANDIDATE_ORDER
+        for seed in SCREEN_SEEDS
+    ]
+    summary_by_pair = {
+        (str(row["candidate"]), int(row["seed"])): row
+        for row in summary_rows
+    }
+    if len(summary_rows) != len(expected_pairs) or list(summary_by_pair) != expected_pairs:
+        raise ValueError("Publication TeX requires all 15 ordered summary rows")
+    lines = [
+        "% Deterministic publication fragment generated by",
+        "% scripts/report_validation_screen_tiles.py",
+        "% Scope: validation-only model development.",
+        "\\begin{figure}[pos=htbp]",
+        "  \\centering",
+        f"  \\includegraphics[width=\\textwidth]{{{Path(PUBLICATION_PDF_NAME).stem}.pdf}}",
+        "  \\caption{Validation-only model development across the complete frozen ",
+        "  screen (five candidates; seeds 42, 123, and 2025). Panels A--C show ",
+        "  pooled C0 IoU, C1 IoU, and their harmonic mean for every seed, with ",
+        "  arithmetic mean $\\pm$ sample standard deviation ($n=3$). Panels D--F ",
+        "  show signed candidate-minus-R3 margins. Panels G--J show C0, C1, C2, ",
+        "  and harmonic-IoU diagnostics for all five validation tiles. R3 remains ",
+        "  the reference fixed by the existing selected-method lock; the reporter ",
+        "  performs no re-selection and no outcome-dependent tile choice.}",
+        "  \\label{fig:validation-screen-summary}",
+        "\\end{figure}",
+        "",
+        "\\begin{table}[pos=htbp]",
+        "  \\caption{Validation-only model development candidate summaries. Values ",
+        "  are arithmetic mean $\\pm$ sample standard deviation across the three ",
+        "  prespecified seeds; $\\Delta$ is the signed candidate-mean-minus-R3-mean ",
+        "  margin. These are descriptive validation diagnostics.}",
+        "  \\label{tab:validation-screen-summary}",
+        "  \\centering",
+        "  \\small",
+        "  \\begin{tabular}{llrr}",
+        "    \\toprule",
+        "    Candidate & Metric & Mean $\\pm$ sample SD & $\\Delta$ vs R3 \\\\",
+        "    \\midrule",
+    ]
+    for candidate in SCREEN_CANDIDATE_ORDER:
+        row = summary_by_pair[(candidate, int(SCREEN_SEEDS[0]))]
+        for metric_index, (key, label, _vector_key, _color) in enumerate(
+            PUBLICATION_METRICS
+        ):
+            candidate_cell = candidate if metric_index == 0 else ""
+            mean_sd = (
+                f"{float(row[f'candidate_mean_{key}']):.3f} "
+                f"$\\pm$ {float(row[f'candidate_sample_sd_{key}']):.3f}"
+            )
+            margin = float(
+                row[f"candidate_mean_{key}_margin_candidate_minus_r3"]
+            )
+            lines.append(
+                f"    {candidate_cell} & {label} & {mean_sd} & {margin:+.3f} \\\\"
+            )
+        if candidate != SCREEN_CANDIDATE_ORDER[-1]:
+            lines.append("    \\addlinespace[2pt]")
+    lines.extend(
+        [
+            "    \\bottomrule",
+            "  \\end{tabular}",
+            "\\end{table}",
+            "",
+        ]
+    )
+    with path.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines))
+
+
+def _render_publication_summary(
+    output_dir: Path,
+    summary_rows: Sequence[Mapping[str, Any]],
+    tile_rows: Sequence[Mapping[str, Any]],
+) -> None:
+    """Render the complete fixed screen as CAS-width PDF and 600-dpi PNG."""
+    summary_by_pair, tile_by_key = _publication_summary_maps(
+        summary_rows, tile_rows
+    )
+    plt = _configure_publication_matplotlib()
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FuncFormatter, PercentFormatter
+
+    candidates = list(SCREEN_CANDIDATE_ORDER)
+    seeds = [int(seed) for seed in SCREEN_SEEDS]
+    x = np.arange(len(candidates), dtype=np.float64)
+    fig = plt.figure(
+        figsize=(CAS_SC_TEXT_WIDTH_INCHES, CAS_SUMMARY_HEIGHT_INCHES)
+    )
+    grid = fig.add_gridspec(
+        6,
+        3,
+        height_ratios=(1.25, 1.20, 0.73, 0.73, 0.73, 0.82),
+        hspace=0.58,
+        wspace=0.28,
+        left=0.075,
+        right=0.968,
+        top=0.875,
+        bottom=0.125,
+    )
+    pooled_axes = [fig.add_subplot(grid[0, column]) for column in range(3)]
+    margin_axes = [fig.add_subplot(grid[1, column]) for column in range(3)]
+
+    for metric_index, (key, label, _vector_key, color) in enumerate(
+        PUBLICATION_METRICS
+    ):
+        axis = pooled_axes[metric_index]
+        for seed in seeds:
+            style = PUBLICATION_SEED_STYLES[seed]
+            values = [
+                float(summary_by_pair[(candidate, seed)][key])
+                for candidate in candidates
+            ]
+            axis.plot(
+                x,
+                values,
+                color=color,
+                linewidth=0.85,
+                alpha=0.72,
+                marker=style["marker"],
+                linestyle=style["linestyle"],
+                markerfacecolor=style["markerfacecolor"],
+                markeredgecolor=color,
+                markeredgewidth=0.9,
+                markersize=4.0,
+                zorder=2,
+            )
+        mean_values = [
+            float(
+                summary_by_pair[(candidate, seeds[0])][f"candidate_mean_{key}"]
+            )
+            for candidate in candidates
+        ]
+        sd_values = [
+            float(
+                summary_by_pair[(candidate, seeds[0])][
+                    f"candidate_sample_sd_{key}"
+                ]
+            )
+            for candidate in candidates
+        ]
+        axis.errorbar(
+            x,
+            mean_values,
+            yerr=sd_values,
+            fmt="D",
+            color="#222222",
+            markerfacecolor=color,
+            markeredgecolor="#222222",
+            markeredgewidth=0.7,
+            markersize=4.4,
+            capsize=2.5,
+            elinewidth=1.0,
+            linewidth=0,
+            zorder=4,
+        )
+        axis.set_title(f"{chr(65 + metric_index)}  {label}", loc="left", pad=5)
+        axis.set_xticks(x, labels=candidates)
+        axis.set_ylim(0.0, 1.0)
+        axis.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
+        axis.grid(axis="y", color="#E2E2E2", linewidth=0.55)
+        axis.set_axisbelow(True)
+        if metric_index == 0:
+            axis.set_ylabel("Pooled metric")
+
+    all_margin_values = [
+        abs(float(row[f"same_seed_{key}_margin_candidate_minus_r3"]))
+        for row in summary_rows
+        for key, _label, _vector_key, _color in PUBLICATION_METRICS
+    ]
+    margin_limit = max(0.02, max(all_margin_values, default=0.0) * 1.18)
+    for metric_index, (key, label, _vector_key, color) in enumerate(
+        PUBLICATION_METRICS
+    ):
+        axis = margin_axes[metric_index]
+        for seed in seeds:
+            style = PUBLICATION_SEED_STYLES[seed]
+            values = [
+                float(
+                    summary_by_pair[(candidate, seed)][
+                        f"same_seed_{key}_margin_candidate_minus_r3"
+                    ]
+                )
+                for candidate in candidates
+            ]
+            axis.plot(
+                x,
+                values,
+                color=color,
+                linewidth=0.85,
+                alpha=0.72,
+                marker=style["marker"],
+                linestyle=style["linestyle"],
+                markerfacecolor=style["markerfacecolor"],
+                markeredgecolor=color,
+                markeredgewidth=0.9,
+                markersize=4.0,
+                zorder=2,
+            )
+        mean_margins = [
+            float(
+                summary_by_pair[(candidate, seeds[0])][
+                    f"candidate_mean_{key}_margin_candidate_minus_r3"
+                ]
+            )
+            for candidate in candidates
+        ]
+        axis.scatter(
+            x,
+            mean_margins,
+            marker="D",
+            s=20,
+            facecolor=color,
+            edgecolor="#222222",
+            linewidth=0.7,
+            zorder=4,
+        )
+        axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle=":")
+        axis.set_title(
+            f"{chr(68 + metric_index)}  Signed {label} margin",
+            loc="left",
+            pad=5,
+        )
+        axis.set_xticks(x, labels=candidates)
+        axis.set_ylim(-margin_limit, margin_limit)
+        axis.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _position: f"{100.0 * value:+.1f}")
+        )
+        axis.grid(axis="y", color="#E2E2E2", linewidth=0.55)
+        axis.set_axisbelow(True)
+        if metric_index == 0:
+            axis.set_ylabel("Candidate − R3 (pp)")
+
+    ordered_pairs = [
+        (candidate, seed) for candidate in candidates for seed in seeds
+    ]
+    heatmap_axes = []
+    for tile_metric_index, (key, label, color) in enumerate(
+        PUBLICATION_TILE_METRICS
+    ):
+        axis = fig.add_subplot(grid[2 + tile_metric_index, :])
+        heatmap_axes.append(axis)
+        matrix = np.asarray(
+            [
+                [
+                    float(tile_by_key[(candidate, seed, ordinal)][key])
+                    for candidate, seed in ordered_pairs
+                ]
+                for ordinal in range(1, EXPECTED_VALIDATION_TILE_COUNT + 1)
+            ],
+            dtype=np.float64,
+        )
+        color_map = LinearSegmentedColormap.from_list(
+            f"validation_{key}", ("#FFFFFF", color)
+        )
+        image = axis.imshow(
+            matrix,
+            cmap=color_map,
+            vmin=0.0,
+            vmax=1.0,
+            interpolation="nearest",
+            aspect="auto",
+        )
+        for row_index in range(EXPECTED_VALIDATION_TILE_COUNT):
+            for column_index in range(len(ordered_pairs)):
+                value = float(matrix[row_index, column_index])
+                axis.text(
+                    column_index,
+                    row_index,
+                    f"{100.0 * value:.0f}",
+                    ha="center",
+                    va="center",
+                    fontsize=6.0,
+                    color="white" if value >= 0.58 else "#222222",
+                )
+        for boundary in range(len(seeds), len(ordered_pairs), len(seeds)):
+            axis.axvline(
+                boundary - 0.5, color="#555555", linewidth=0.75, linestyle="--"
+            )
+        axis.axhline(-0.5, color=color, linewidth=1.15)
+        axis.set_yticks(
+            range(EXPECTED_VALIDATION_TILE_COUNT),
+            labels=[
+                f"Tile {ordinal}"
+                for ordinal in range(1, EXPECTED_VALIDATION_TILE_COUNT + 1)
+            ],
+        )
+        axis.set_title(
+            f"{chr(71 + tile_metric_index)}  {label} (%)",
+            loc="left",
+            pad=3,
+        )
+        axis.tick_params(axis="both", length=0)
+        axis.spines[:].set_visible(False)
+        if tile_metric_index == len(PUBLICATION_TILE_METRICS) - 1:
+            axis.set_xticks(
+                range(len(ordered_pairs)),
+                labels=[
+                    f"{candidate}\n{seed}" for candidate, seed in ordered_pairs
+                ],
+            )
+            axis.tick_params(axis="x", labelsize=6.0, pad=2)
+            axis.set_xlabel("Candidate and prespecified seed", labelpad=3)
+        else:
+            axis.set_xticks([])
+        colorbar = fig.colorbar(image, ax=axis, fraction=0.013, pad=0.012)
+        colorbar.set_ticks((0.0, 0.5, 1.0), labels=("0", "50", "100"))
+        colorbar.ax.tick_params(labelsize=6.0, length=2)
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color="#444444",
+            marker=PUBLICATION_SEED_STYLES[seed]["marker"],
+            linestyle=PUBLICATION_SEED_STYLES[seed]["linestyle"],
+            markerfacecolor="white",
+            markeredgecolor="#444444",
+            linewidth=0.9,
+            markersize=4.2,
+            label=f"Seed {seed}",
+        )
+        for seed in seeds
+    ]
+    legend_handles.append(
+        Line2D(
+            [0],
+            [0],
+            color="#222222",
+            marker="D",
+            linestyle="none",
+            markersize=4.2,
+            label="Mean ± sample SD",
+        )
+    )
+    fig.suptitle(
+        "Validation-only model development",
+        x=0.075,
+        y=0.988,
+        ha="left",
+        fontsize=11,
+        fontweight="semibold",
+    )
+    fig.text(
+        0.075,
+        0.962,
+        (
+            "Five fixed validation tiles × five prespecified candidates × seeds "
+            "42, 123 and 2025; R3 is the reference fixed by the existing lock."
+        ),
+        ha="left",
+        va="top",
+        fontsize=7.2,
+        color="#555555",
+    )
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.62, 0.944),
+        ncol=4,
+        frameon=False,
+        handlelength=2.3,
+        columnspacing=1.2,
+        fontsize=6.3,
+    )
+    fig.text(
+        0.075,
+        0.006,
+        (
+            "Descriptive diagnostics only. Means use n=3 seeds; error bars are "
+            "sample SD.\nSigned margins are candidate minus same-seed R3. Every "
+            "validation tile is shown\nin fixed ordinal order; no re-selection or "
+            "outcome-dependent tile choice was performed."
+        ),
+        ha="left",
+        va="bottom",
+        fontsize=6.2,
+        color="#555555",
+    )
+    fixed_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    fig.savefig(
+        output_dir / PUBLICATION_PDF_NAME,
+        metadata={
+            "Creator": "report_validation_screen_tiles.py",
+            "Producer": "Matplotlib",
+            "CreationDate": fixed_time,
+            "ModDate": fixed_time,
+            "Title": "Validation-only model development",
+            "Subject": "Complete frozen validation screen diagnostics",
+        },
+    )
+    fig.savefig(
+        output_dir / PUBLICATION_PNG_NAME,
+        dpi=PUBLICATION_PNG_DPI,
+        metadata={
+            "Software": "report_validation_screen_tiles.py",
+            "Title": "Validation-only model development",
+            "Description": (
+                "Complete frozen validation screen; all candidates, seeds, and "
+                "five fixed validation tiles"
+            ),
+        },
+    )
+    plt.close(fig)
+
+
 def _csv_value(value: Any) -> Any:
     if isinstance(value, (float, np.floating)):
         number = float(value)
@@ -1152,11 +1859,14 @@ def write_report_bundle(
     report: Mapping[str, Any],
     metric_rows: Sequence[Mapping[str, Any]],
     margin_rows: Sequence[Mapping[str, Any]],
+    summary_rows: Sequence[Mapping[str, Any]],
+    tile_rows: Sequence[Mapping[str, Any]],
 ) -> Dict[str, str]:
-    """Atomically write JSON/CSV payloads and their deterministic checksums."""
+    """Atomically write all tabular/figure payloads and deterministic checksums."""
     output_dir = Path(output_dir)
     if output_dir.exists():
         raise FileExistsError(f"Refusing to overwrite validation report: {output_dir}")
+    _publication_summary_maps(summary_rows, tile_rows)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(
         tempfile.mkdtemp(prefix=f".{output_dir.name}.tmp.", dir=output_dir.parent)
@@ -1174,6 +1884,7 @@ def write_report_bundle(
             handle.write("\n")
         metric_fields = (
             "evidence_kind",
+            "evidence_label",
             "candidate",
             "seed",
             "array_index",
@@ -1198,6 +1909,7 @@ def write_report_bundle(
         )
         _write_csv(temporary / OUTPUT_FILE_NAMES[1], metric_fields, metric_rows)
         margin_fields = (
+            "evidence_label",
             "scope",
             "candidate",
             "seed",
@@ -1207,6 +1919,66 @@ def write_report_bundle(
             "signed_margin_candidate_minus_r3",
         )
         _write_csv(temporary / OUTPUT_FILE_NAMES[2], margin_fields, margin_rows)
+        summary_fields = (
+            "evidence_label",
+            "candidate",
+            "seed",
+            "array_index",
+            "validation_tile_count",
+            "c0_iou",
+            "c1_iou",
+            "c0_c1_harmonic_iou",
+            "candidate_mean_c0_iou",
+            "candidate_sample_sd_c0_iou",
+            "candidate_mean_c1_iou",
+            "candidate_sample_sd_c1_iou",
+            "candidate_mean_c0_c1_harmonic_iou",
+            "candidate_sample_sd_c0_c1_harmonic_iou",
+            "same_seed_c0_iou_margin_candidate_minus_r3",
+            "same_seed_c1_iou_margin_candidate_minus_r3",
+            "same_seed_c0_c1_harmonic_iou_margin_candidate_minus_r3",
+            "candidate_mean_c0_iou_margin_candidate_minus_r3",
+            "candidate_mean_c1_iou_margin_candidate_minus_r3",
+            "candidate_mean_c0_c1_harmonic_iou_margin_candidate_minus_r3",
+            "selection_reference",
+            "selection_performed_by_reporter",
+            "outcome_dependent_tile_choice_performed",
+        )
+        _write_csv(
+            temporary / PUBLICATION_SUMMARY_CSV_NAME,
+            summary_fields,
+            summary_rows,
+        )
+        tile_fields = (
+            "evidence_label",
+            "candidate",
+            "seed",
+            "array_index",
+            "validation_ordinal",
+            "image_id",
+            "file_name",
+            "input_image_sha256",
+            "target_mask_sha256",
+            "c0_support_pixels",
+            "c1_support_pixels",
+            "c2_support_pixels",
+            "c0_iou",
+            "c1_iou",
+            "c2_iou",
+            "c0_c1_harmonic_iou",
+            "selection_reference",
+            "outcome_dependent_tile_choice_performed",
+        )
+        _write_csv(
+            temporary / PUBLICATION_TILE_CSV_NAME,
+            tile_fields,
+            tile_rows,
+        )
+        _write_publication_tex(
+            temporary / PUBLICATION_TEX_NAME,
+            summary_rows,
+        )
+        _render_publication_summary(temporary, summary_rows, tile_rows)
         checksums = {
             name: sha256_file(temporary / name) for name in OUTPUT_FILE_NAMES
         }
@@ -1240,6 +2012,7 @@ def build_report(
         "evidence_label": EVIDENCE_LABEL,
         "scientific_scope": {
             "model_development_only": True,
+            "publication_label": EVIDENCE_LABEL,
             "winner_reselection_performed": False,
             "recorded_partition_metadata_authenticated": True,
             "live_locked_retrospective_dataset_constructed": False,
@@ -1257,8 +2030,8 @@ def build_report(
                 "bytes were opened"
             ),
             "publication_interpretation": (
-                "Validation-screen diagnostics only; do not label as test, held-out, "
-                "confirmatory, or unseen-partition performance"
+                "Validation-only model development; do not interpret these "
+                "descriptive diagnostics as retrospective performance"
             ),
         },
         "selected_method_lock": {
@@ -1325,6 +2098,46 @@ def build_report(
         },
         "candidate_summaries": list(candidate_summaries),
         "cells": list(cell_reports),
+        "publication_summary_contract": {
+            "label": EVIDENCE_LABEL,
+            "candidate_order": list(SCREEN_CANDIDATE_ORDER),
+            "seed_order": list(SCREEN_SEEDS),
+            "validation_tile_ordinals": list(
+                range(1, EXPECTED_VALIDATION_TILE_COUNT + 1)
+            ),
+            "candidate_seed_row_count": SCREEN_CELL_COUNT,
+            "tile_diagnostic_row_count": (
+                SCREEN_CELL_COUNT * EXPECTED_VALIDATION_TILE_COUNT
+            ),
+            "aggregate_metrics": [item[0] for item in PUBLICATION_METRICS],
+            "aggregate_summary": "arithmetic_mean_and_sample_standard_deviation",
+            "signed_margin": "candidate_minus_R3",
+            "significance_claims": False,
+            "selection_fixed_by_existing_lock": True,
+            "winner_reselection_performed": False,
+            "outcome_dependent_tile_choice_performed": False,
+            "figure_geometry_inches": {
+                "width": CAS_SC_TEXT_WIDTH_INCHES,
+                "height": CAS_SUMMARY_HEIGHT_INCHES,
+                "cas_layout": "active_cas_sc_text_width",
+            },
+            "active_cas_sc_text_width_tex_points": 468.3324,
+            "minimum_visible_label_points": 6.0,
+            "png_dpi": PUBLICATION_PNG_DPI,
+            "font_family_preference": ["Arial", "Helvetica"],
+            "pdf_font_type": 42,
+            "class_palette": {
+                f"C{class_id}": color
+                for class_id, color in PUBLICATION_CLASS_COLORS.items()
+            },
+            "non_color_seed_encoding": {
+                str(seed): {
+                    "marker": PUBLICATION_SEED_STYLES[int(seed)]["marker"],
+                    "line_style": PUBLICATION_SEED_STYLES[int(seed)]["linestyle"],
+                }
+                for seed in SCREEN_SEEDS
+            },
+        },
         "code": {
             "reporter_path": "scripts/report_validation_screen_tiles.py",
             "reporter_sha256": sha256_file(Path(__file__).resolve()),
@@ -1335,6 +2148,9 @@ def build_report(
             "checksum_manifest": "checksums.sha256",
             "checksum_algorithm": "sha256",
             "timestamps_in_payloads": False,
+            "runtime_timestamps_in_payloads": False,
+            "fixed_pdf_metadata_timestamp_utc": "2000-01-01T00:00:00Z",
+            "overwrite_existing_output_directory": False,
         },
     }
 
@@ -1440,6 +2256,8 @@ def run_report(
     ]
     candidate_summaries, margin_rows = attach_signed_r3_margins(cell_reports)
     metric_rows = metric_csv_rows(cell_reports)
+    summary_rows = publication_summary_rows(cell_reports, candidate_summaries)
+    tile_rows = publication_tile_rows(cell_reports)
     report = build_report(
         verified_lock=verified_lock,
         lock_sha256=lock_sha256,
@@ -1453,7 +2271,14 @@ def run_report(
         repository_root,
         Path(CANONICAL_OUTPUT_ROOT) / lock_sha256,
     )
-    write_report_bundle(output_dir, report, metric_rows, margin_rows)
+    write_report_bundle(
+        output_dir,
+        report,
+        metric_rows,
+        margin_rows,
+        summary_rows,
+        tile_rows,
+    )
     return output_dir
 
 

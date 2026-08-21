@@ -9,6 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "aire_confirmatory.slurm"
 LOCKED_EVALUATION_SCRIPT = ROOT / "scripts" / "aire_locked_evaluation.slurm"
+VALIDATION_REPORT_SCRIPT = ROOT / "scripts" / "aire_validation_report.slurm"
 
 
 def _write_executable(path, body):
@@ -186,6 +187,75 @@ def _run_locked_evaluation(
     return result, calls
 
 
+def _run_validation_report(tmp_path, **overrides):
+    bin_dir = tmp_path / "bin"
+    project_dir = tmp_path / "project"
+    conda_base = tmp_path / "conda"
+    profile_dir = conda_base / "etc" / "profile.d"
+    bin_dir.mkdir(parents=True)
+    project_dir.mkdir()
+    profile_dir.mkdir(parents=True)
+    _write_executable(bin_dir / "module", "#!/bin/bash\nexit 0\n")
+    _write_executable(
+        bin_dir / "conda",
+        "#!/bin/bash\n"
+        "if [[ \"$1\" == info && \"$2\" == --base ]]; then\n"
+        "  printf '%s\\n' \"$MOCK_CONDA_BASE\"\n"
+        "fi\n",
+    )
+    (profile_dir / "conda.sh").write_text(
+        "conda() { return 0; }\n", encoding="utf-8"
+    )
+    _write_executable(
+        bin_dir / "nvidia-smi",
+        "#!/bin/bash\nprintf '%s\\n' \"${MOCK_GPU_NAME:-NVIDIA L40S}\"\n",
+    )
+    capture = tmp_path / "python_calls.txt"
+    _write_executable(
+        bin_dir / "python3",
+        "#!/bin/bash\n"
+        "printf '%s\\n' __CALL__ \"$@\" >> \"$PORE_ARGUMENT_CAPTURE\"\n"
+        "exit 0\n",
+    )
+    environment = os.environ.copy()
+    for key in list(environment):
+        if key.startswith("BASH_FUNC_") or key.startswith("PORE_") or key in {
+            "QUICK_TEST",
+            "SINGLE_BATCH",
+            "DISABLE_AMP",
+            "SLURM_ARRAY_TASK_ID",
+        }:
+            environment.pop(key)
+    environment.update(
+        {
+            "PATH": f"{bin_dir}:{environment['PATH']}",
+            "MOCK_CONDA_BASE": str(conda_base),
+            "PORE_ARGUMENT_CAPTURE": str(capture),
+            "SLURM_SUBMIT_DIR": str(project_dir),
+            "SLURM_JOB_ID": "902",
+            "SLURM_JOB_PARTITION": "gpu",
+        }
+    )
+    environment.update({key: str(value) for key, value in overrides.items()})
+    result = subprocess.run(
+        ["/bin/bash", str(VALIDATION_REPORT_SCRIPT)],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+    calls = []
+    if capture.exists():
+        current = None
+        for line in capture.read_text(encoding="utf-8").splitlines():
+            if line == "__CALL__":
+                current = []
+                calls.append(current)
+            else:
+                current.append(line)
+    return result, calls
+
+
 @pytest.mark.parametrize(
     ("index", "candidate", "seed", "model", "loss", "patch", "batch"),
     [
@@ -345,6 +415,7 @@ def test_mode_wrappers_freeze_array_concurrency_and_time_limits():
     smoke = (ROOT / "scripts/aire_validation_smoke.slurm").read_text()
     selected = (ROOT / "scripts/aire_selected_retrain.slurm").read_text()
     locked_evaluation = LOCKED_EVALUATION_SCRIPT.read_text()
+    validation_report = VALIDATION_REPORT_SCRIPT.read_text()
     assert "#SBATCH --array=0-14%1" in screen
     assert "#SBATCH --time=04:00:00" in screen
     assert "#SBATCH --array=0-2%1" in smoke
@@ -353,6 +424,48 @@ def test_mode_wrappers_freeze_array_concurrency_and_time_limits():
     assert "#SBATCH --time=04:00:00" in selected
     assert "#SBATCH --array=0-2%1" in locked_evaluation
     assert "#SBATCH --time=01:15:00" in locked_evaluation
+    assert "#SBATCH --array=" not in validation_report
+    assert "#SBATCH --gres=gpu:l40s:1" in validation_report
+    assert "#SBATCH --time=01:30:00" in validation_report
+
+
+def test_validation_report_wrapper_uses_only_canonical_lock_and_cuda(tmp_path):
+    result, calls = _run_validation_report(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert calls == [
+        [
+            "scripts/report_validation_screen_tiles.py",
+            "--selected-method-lock",
+            "config/selected_method_lock.json",
+            "--device",
+            "cuda",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"SLURM_JOB_ID": ""}, "active Slurm allocation"),
+        ({"SLURM_JOB_PARTITION": "nodes"}, "gpu partition"),
+        ({"SLURM_ARRAY_TASK_ID": "0"}, "must not run as a Slurm array"),
+        ({"MOCK_GPU_NAME": "A100"}, "NVIDIA L40S"),
+        (
+            {"PORE_SELECTED_METHOD_LOCK": "alternate.json"},
+            "forbids PORE_SELECTED_METHOD_LOCK",
+        ),
+        ({"PORE_PROJECT_DIR": "/tmp/alternate"}, "forbids PORE_PROJECT_DIR"),
+        ({"PORE_DEVICE": "cpu"}, "forbids PORE_DEVICE"),
+        ({"PORE_IMAGE_DIR": "alternate"}, "forbids PORE_IMAGE_DIR"),
+    ],
+)
+def test_validation_report_wrapper_fails_closed_before_python(
+    tmp_path, overrides, message
+):
+    result, calls = _run_validation_report(tmp_path, **overrides)
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert calls == []
 
 
 @pytest.mark.parametrize("task", [0, 1, 2])

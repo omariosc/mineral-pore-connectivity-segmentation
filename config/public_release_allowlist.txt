@@ -75,6 +75,7 @@ scripts/aire_fit_classical_comparators.slurm
 scripts/aire_locked_classical_evaluation.slurm
 scripts/aire_locked_evaluation.slurm
 scripts/aire_selected_retrain.slurm
+scripts/aire_validation_report.slurm
 scripts/aire_validation_screen.slurm
 scripts/aire_validation_smoke.slurm
 scripts/assemble_publication_results.py
@@ -101,6 +102,7 @@ tests/test_confirmatory_evaluator.py
 tests/test_classical_comparators.py
 tests/test_classical_evaluator.py
 tests/test_checkpoint_security.py
+tests/test_execution_source_closure.py
 tests/test_hierarchical_pore_loss.py
 tests/test_model_resolution.py
 tests/test_neural_freeze.py
