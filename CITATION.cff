@@ -2,7 +2,8 @@ cff-version: 1.2.0
 message: "If you use this repository, please cite it using the metadata below."
 title: "Mineral Pore Connectivity Segmentation"
 authors:
-  - name: "Mineral Pore Segmentation Contributors"
+  - family-names: "Choudhry"
+    given-names: "Omar"
 year: 2026
 license: MIT
 repository-code: "https://github.com/omariosc/mineral-pore-connectivity-segmentation"
