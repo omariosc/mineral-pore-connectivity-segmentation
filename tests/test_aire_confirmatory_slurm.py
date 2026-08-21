@@ -346,11 +346,11 @@ def test_mode_wrappers_freeze_array_concurrency_and_time_limits():
     selected = (ROOT / "scripts/aire_selected_retrain.slurm").read_text()
     locked_evaluation = LOCKED_EVALUATION_SCRIPT.read_text()
     assert "#SBATCH --array=0-14%1" in screen
-    assert "#SBATCH --time=01:15:00" in screen
+    assert "#SBATCH --time=04:00:00" in screen
     assert "#SBATCH --array=0-2%1" in smoke
     assert "#SBATCH --time=00:15:00" in smoke
     assert "#SBATCH --array=0-2%1" in selected
-    assert "#SBATCH --time=01:15:00" in selected
+    assert "#SBATCH --time=04:00:00" in selected
     assert "#SBATCH --array=0-2%1" in locked_evaluation
     assert "#SBATCH --time=01:15:00" in locked_evaluation
 
