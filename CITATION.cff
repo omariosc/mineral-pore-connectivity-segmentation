@@ -4,7 +4,6 @@ title: "Mineral Pore Connectivity Segmentation"
 authors:
   - family-names: "Choudhry"
     given-names: "Omar"
-year: 2026
 license: MIT
 repository-code: "https://github.com/omariosc/mineral-pore-connectivity-segmentation"
 abstract: "Research code and reproducibility contracts for three-class pore-connectivity segmentation in geological microscopy images."
