@@ -311,7 +311,35 @@ tracked tree; use `--selection-only` during review of a mixed local checkout.
 The public repository does not grant rights to the research images, derived
 masks, trained weights, manuscript, or locally generated publication assets.
 See [DATA_AVAILABILITY.md](DATA_AVAILABILITY.md) for the current data status.
-`CITATION.cff` remains provisional until the software author list and release
-identifier are confirmed. The reviewed code-only release is provided under the
-MIT licence; that licence does not extend to the excluded research data,
-manuscript, trained weights, or publication artwork.
+The reviewed code-only release is provided under the MIT licence; that licence
+does not extend to the excluded research data, manuscript, trained weights, or
+publication artwork.
+
+The software and the associated paper have separate authorship and should be
+cited separately. Omar Choudhry is the sole software author:
+
+```bibtex
+@software{choudhry2026mineral,
+  author = {Choudhry, Omar},
+  title  = {Mineral Pore Connectivity Segmentation},
+  year   = {2026},
+  url    = {https://github.com/omariosc/mineral-pore-connectivity-segmentation}
+}
+```
+
+The paper citation records all manuscript authors. Replace the provisional
+publication details with the final volume, pages, and DOI when available:
+
+```bibtex
+@article{alwan2026multiscale,
+  author = {Alwan, Wurood S. and Choudhry, Omar and Tliba, Louey and
+            Glover, Paul and Collier, Richard},
+  title  = {Multiscale attention U-Net for operational 2D segmentation of
+            isolated and connected pores in carbonate BSE-SEM microscopy},
+  year   = {2026},
+  note   = {Manuscript prepared for Computers \& Geosciences}
+}
+```
+
+The repository contains no research microscopy images, annotations, masks, or
+trained weights. Those materials are not public.
