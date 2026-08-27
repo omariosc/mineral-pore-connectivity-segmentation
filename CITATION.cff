@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this repository, please cite it using the metadata below."
+message: "Please cite the software and the associated paper separately. The repository contains code only; the research microscopy data are not public."
 title: "Mineral Pore Connectivity Segmentation"
 authors:
   - family-names: "Choudhry"
@@ -7,3 +7,18 @@ authors:
 license: MIT
 repository-code: "https://github.com/omariosc/mineral-pore-connectivity-segmentation"
 abstract: "Research code and reproducibility contracts for three-class pore-connectivity segmentation in geological microscopy images."
+references:
+  - type: article
+    title: "Multiscale attention U-Net for operational 2D segmentation of isolated and connected pores in carbonate BSE-SEM microscopy"
+    authors:
+      - family-names: "Alwan"
+        given-names: "Wurood S."
+      - family-names: "Choudhry"
+        given-names: "Omar"
+      - family-names: "Tliba"
+        given-names: "Louey"
+      - family-names: "Glover"
+        given-names: "Paul"
+      - family-names: "Collier"
+        given-names: "Richard"
+    year: 2026
