@@ -1,0 +1,97 @@
+{
+  "protocol_id": "cageo_post_review_controls_20261021_v1",
+  "scope": "validation_only_revision_experiments",
+  "original_screen_lock_sha256": "580aa64d30668602e1af26dda0963a992384eede619268a7cfbf92f75902620c",
+  "seeds": [
+    42,
+    123,
+    2025
+  ],
+  "epochs": 30,
+  "patience": 10,
+  "patch_size": 683,
+  "batch_size": 4,
+  "workers": 8,
+  "base_features": 32,
+  "threshold": 100,
+  "learning_rate": 0.0005,
+  "weight_decay": 0.0001,
+  "augmentation": "historical light symmetry policy and worker seeding",
+  "checkpoint_selection": "harmonic C0 C1 IoU then pore union IoU then lower validation loss",
+  "reserved_partition_access": false,
+  "original_winner_reselection": false,
+  "max_concurrent_gpus": 1,
+  "max_minutes_per_cell": 45,
+  "arms": [
+    {
+      "name": "plain",
+      "multiscale": false,
+      "attention": false,
+      "boundary": false,
+      "input_channels": 2,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "attention",
+      "multiscale": false,
+      "attention": true,
+      "boundary": false,
+      "input_channels": 2,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "multiscale",
+      "multiscale": true,
+      "attention": false,
+      "boundary": false,
+      "input_channels": 2,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "multiscale_attention",
+      "multiscale": true,
+      "attention": true,
+      "boundary": false,
+      "input_channels": 2,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "original_full",
+      "multiscale": true,
+      "attention": true,
+      "boundary": true,
+      "input_channels": 2,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "grayscale_only",
+      "multiscale": true,
+      "attention": true,
+      "boundary": true,
+      "input_channels": 1,
+      "focal_weight": 0.5
+    },
+    {
+      "name": "focal_25",
+      "multiscale": true,
+      "attention": true,
+      "boundary": true,
+      "input_channels": 2,
+      "focal_weight": 0.25
+    },
+    {
+      "name": "focal_75",
+      "multiscale": true,
+      "attention": true,
+      "boundary": true,
+      "input_channels": 2,
+      "focal_weight": 0.75
+    }
+  ],
+  "analysis": "Report every cell and failure. Pair seeds across arms. No best-seed selection, significance claim from pixels, or migration into historical candidate selection. Factorial architecture arms hold boundary modules absent. Original full is a separate boundary-module control. Coefficients do not imply equal numerical loss or gradient magnitude.",
+  "allowed_hardware": [
+    "l40s",
+    "h200"
+  ],
+  "amp_initial_scale": 1024.0
+}

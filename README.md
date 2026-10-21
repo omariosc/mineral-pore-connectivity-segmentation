@@ -193,6 +193,16 @@ class scores, tile-level records, whole-tile bootstrap intervals, and
 histogram-based ROC/precision-recall summaries without persisting raw pixel
 probabilities.
 
+## Post review controls
+
+The separately dated [revision protocol](docs/REVISION_CONTROLS_2026-10-21.md)
+adds same-gate inference controls, descriptive validation analyses, and registered
+architecture, gate-input and loss-coefficient comparisons. It preserves the
+historical selected method and does not access reserved image or mask bytes.
+CPU float32 reanalysis is labelled separately from historical GPU AMP results.
+New training requires scheduled compute and an exact-entry smoke that establishes
+finite gradients, successful optimizer updates and native-tile validation.
+
 ## Public release boundary
 
 Research images, masks, generated result trees, checkpoints, logs, manuscript
@@ -287,6 +297,10 @@ python3 -m pytest -o addopts='' -q \
   tests/test_conditional_pore_loss.py \
   tests/test_hierarchical_pore_loss.py \
   tests/test_pyramid_context.py \
+  tests/test_revision_metrics.py \
+  tests/test_revision_models.py \
+  tests/test_revision_training.py \
+  tests/test_revision_inference.py \
   tests/test_screen_selection.py \
   tests/test_execution_source_closure.py \
   tests/test_neural_freeze.py \

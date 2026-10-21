@@ -76,6 +76,10 @@ jobs:
           tests/test_conditional_pore_loss.py
           tests/test_hierarchical_pore_loss.py
           tests/test_pyramid_context.py
+          tests/test_revision_metrics.py
+          tests/test_revision_models.py
+          tests/test_revision_training.py
+          tests/test_revision_inference.py
           tests/test_screen_selection.py
           tests/test_execution_source_closure.py
           tests/test_neural_freeze.py

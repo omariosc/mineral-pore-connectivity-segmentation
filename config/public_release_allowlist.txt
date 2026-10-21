@@ -125,3 +125,14 @@ docs/PAPER_ASSETS.md
 docs/REPOSITORY_HYGIENE.md
 docs/REPRODUCIBILITY.md
 docs/REPRODUCIBILITY_AUDIT_2026-08-20.md
+config/revision_protocol.json
+scripts/revision_metrics.py
+scripts/revision_models.py
+scripts/run_revision_validation.py
+scripts/train_revision_controls.py
+tests/test_revision_metrics.py
+tests/test_revision_models.py
+tests/test_revision_training.py
+scripts/revision_classical_validation.py
+docs/REVISION_CONTROLS_2026-10-21.md
+tests/test_revision_inference.py
