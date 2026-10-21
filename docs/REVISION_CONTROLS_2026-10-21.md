@@ -30,7 +30,11 @@ backends and numerical precision affect hard boundaries. Keep recorded scores,
 new confusion counts, numerical backend flags and signed discrepancies separately.
 No tolerance in the original reporter or selector is changed. An H200 migration is
 an explicitly labelled hardware reanalysis, not an exact reproduction of L40S
-predictions. The original-family diagnostic remains separate.
+predictions. Scheduled CPU float32 inference may also be used for the fixed-weight
+gate controls when GPU allocations are unavailable. It is labelled as a separate
+precision reanalysis; every paired comparison uses the same CPU procedure, and
+its scores do not silently replace historical AMP values. The original-family
+diagnostic remains separate.
 
 Threshold sensitivity uses 90, 95, 100, 105 and 110, with both the C2-P input channel
 and final composition recomputed. This is an inference-only robustness analysis

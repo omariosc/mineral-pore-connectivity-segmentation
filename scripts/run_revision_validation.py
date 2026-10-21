@@ -15,14 +15,25 @@ from pathlib import Path
 import platform
 import sys
 import time
+from contextlib import nullcontext
 import numpy as np
-from revision_metrics import (
-    compose_gate_logits,
-    confusion,
-    summarize_confusion,
-    gate_confusion,
-    component_recovery,
-)
+
+try:
+    from .revision_metrics import (
+        compose_gate_logits,
+        confusion,
+        summarize_confusion,
+        gate_confusion,
+        component_recovery,
+    )
+except ImportError:
+    from revision_metrics import (
+        compose_gate_logits,
+        confusion,
+        summarize_confusion,
+        gate_confusion,
+        component_recovery,
+    )
 
 
 def sha(path):
@@ -49,9 +60,11 @@ def write_csv(path, rows):
 
 def runtime_guard(hardware):
     if not os.environ.get("SLURM_JOB_ID"):
-        raise RuntimeError("Use a scheduled L40S job")
+        raise RuntimeError("Use a scheduled compute allocation")
     import torch
 
+    if hardware == "cpu":
+        return torch
     token = {"l40s": "L40S", "h200": "H200"}[hardware]
     if not torch.cuda.is_available() or token not in torch.cuda.get_device_name(0):
         raise RuntimeError(
@@ -67,12 +80,19 @@ def set_backend(torch, profile):
     torch.backends.cudnn.allow_tf32 = True
 
 
-def logits_for(torch, model, image, candidate, prepare, threshold=100):
+def logits_for(
+    torch, model, image, candidate, prepare, threshold=100, *, device="cuda"
+):
     value = prepare(image, candidate)
     if value.shape[0] == 2:
         value[1] = (image < threshold).astype(np.float32)
-    tensor = torch.from_numpy(value).unsqueeze(0).cuda()
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
+    tensor = torch.from_numpy(value).unsqueeze(0).to(device)
+    precision = (
+        torch.autocast("cuda", dtype=torch.float16)
+        if device == "cuda"
+        else nullcontext()
+    )
+    with torch.inference_mode(), precision:
         logits = model(tensor)
         if isinstance(logits, (tuple, list)):
             logits = logits[0]
@@ -97,9 +117,10 @@ def main():
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--diagnose-only", action="store_true")
-    parser.add_argument("--hardware", choices=["l40s", "h200"], default="l40s")
+    parser.add_argument("--hardware", choices=["l40s", "h200", "cpu"], default="l40s")
     args = parser.parse_args()
     torch = runtime_guard(args.hardware)
+    device = "cpu" if args.hardware == "cpu" else "cuda"
     root = args.source_root.resolve(strict=True)
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -140,11 +161,12 @@ def main():
             "torch": str(torch.__version__),
             "cuda": torch.version.cuda,
             "cudnn": torch.backends.cudnn.version(),
-            "gpu": torch.cuda.get_device_name(0),
+            "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
+            "cpu_threads": torch.get_num_threads(),
             "historical_gpu_family_matched": args.hardware == "l40s",
         },
         "inference": {
-            "amp": "float16",
+            "amp": "float16" if device == "cuda" else "disabled_float32",
             "hard_prediction": "argmax over logits before probability conversion",
             "normalization": "historical prepare_locked_model_input",
             "gate": "raw uint8 intensity strictly less than threshold",
@@ -162,15 +184,20 @@ def main():
     diagnostics = []
     saved = {}
     work = cells[:1] if args.diagnose_only else cells
-    profiles = ("deterministic", "training") if args.diagnose_only else ("training",)
+    profiles = (
+        ("cpu_float32",)
+        if device == "cpu"
+        else (("deterministic", "training") if args.diagnose_only else ("training",))
+    )
     for cell in work:
         checkpoint, state, identity = historical.authenticate_screen_checkpoint(
             cell, lock, root
         )
         for profile in profiles:
-            set_backend(torch, profile)
+            if device == "cuda":
+                set_backend(torch, profile)
             model, model_config = create_model_from_state(state)
-            model.cuda().eval()
+            model.to(device).eval()
             candidate = cell["candidate"]
             seed = int(cell["seed"])
             scope_rows = []
@@ -192,6 +219,7 @@ def main():
                         candidate,
                         prepare_locked_model_input,
                         threshold,
+                        device=device,
                     )
                     native = logits.argmax(axis=0).astype(np.uint8)
                     predictions = (
@@ -253,7 +281,7 @@ def main():
                             )
                             Image.fromarray(pred).save(destination / name)
                             saved[(identifier, candidate, composition)] = pred
-                if threshold != 100:
+                if threshold != 100 and device == "cuda":
                     torch.cuda.empty_cache()
             expected_composition = (
                 "native" if candidate in ("R3", "H3") else "gate_composed"
@@ -306,7 +334,8 @@ def main():
             )
             write_json(args.output / "report.json", report)
             del model
-            torch.cuda.empty_cache()
+            if device == "cuda":
+                torch.cuda.empty_cache()
         if not args.diagnose_only:
             record_path = root / cell["result_artifact_repo_relative_identifier"]
             run = record_path.parent.parent
