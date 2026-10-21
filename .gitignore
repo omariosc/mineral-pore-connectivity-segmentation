@@ -127,3 +127,10 @@ scripts/**
 # separately reviewed asset release must use exact allowlist entries and a
 # completed approval manifest.
 paper_assets/
+
+# Reviewed revision analysis utilities.
+!scripts/revision_metrics.py
+!scripts/run_revision_validation.py
+!scripts/revision_models.py
+!scripts/train_revision_controls.py
+!scripts/revision_classical_validation.py
